@@ -15,3 +15,6 @@ coverage/
 *.dump
 *.backup
 *.bak
+*.iml
+.idea/
+project-info.txt

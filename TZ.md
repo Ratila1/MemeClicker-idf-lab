@@ -2,7 +2,7 @@
 
 **Версия:** 1.1 (срок: 8 часов)
 
-**Стек:** Java 25, Spring Boot 4.0.x, Spring MVC + Virtual Threads, **Gradle (Kotlin DSL, Wrapper)**, React + Vite, Kafka, RabbitMQ, Redis, PostgreSQL.
+**Стек:** Java 25, Spring Boot 4.0.x, Spring MVC + Virtual Threads, **Gradle (Kotlin DSL, Wrapper)**, React + Vite, Kafka, Redis.
 
 **Деплой:** Render.com (Web Service, Docker) + внешние managed-сервисы.
 
@@ -10,7 +10,7 @@
 
 ## 1. Цель
 
-Мини-игра для соревновательного кликинга. Игроки заходят в единое лобби по никнейму. При наборе минимум 5 человек и единогласной готовности стартует 60-секундный раунд. Каждый клик проходит через Kafka, обрабатывается консьюмером и обновляет лидерборд в Redis. Фронтенд получает лидерборд и статус лобби по WebSocket. Итоги раунда сохраняются в PostgreSQL.
+Мини-игра для соревновательного кликинга. Игроки заходят в единое лобби по никнейму. При наборе минимум 5 человек и единогласной готовности стартует 60-секундный раунд. Каждый клик проходит через Kafka, обрабатывается консьюмером и обновляет лидерборд в Redis. Фронтенд получает лидерборд и статус лобби по WebSocket. Итоги раунда и история матчей сохраняются в Redis.
 
 **Ключевые требования:**
 
@@ -30,10 +30,8 @@
 | Сборка | **Gradle (Kotlin DSL), `gradlew` в репозитории, toolchain 25**, монорепо (`backend/`, `frontend/`, `bots/`) |
 | Frontend | React + Vite |
 | Kafka | Aiven free tier |
-| RabbitMQ | CloudAMQP Little Lemur |
-| Redis | Upstash (персистентный free tier) |
-| PostgreSQL | Render free tier или Neon (история матчей) |
-| Тесты | Testcontainers 2.x |
+| Redis | Upstash (персистентный free tier): лобби, дедупликация, лидерборд, история матчей |
+| Тесты | Testcontainers 2.x (Kafka + Redis) |
 | Деплой | Render Web Service, multi-stage Dockerfile |
 
 ## 3. Архитектура
@@ -44,12 +42,12 @@
      |<-----WebSocket---------+  (лидерборд, статус лобби)
      |                   +----+-----+
      |                   v          v
-     |             [RabbitMQ]   [Kafka Producer]
-     |              fanout      (клики, acks=all)
-     |                   |          |
-     |                   v          v
-     |             [Redis]    [Kafka: clicks, 1 партиция]
-     |             (лобби)          |
+     |             [Redis]      [Kafka Producer]
+     |             (лобби)      (клики, acks=all)
+     |                              |
+     |                              v
+     |                  [Kafka: clicks, 1 партиция]
+     |                              |
      |                              v
      |              [Kafka Consumer в том же приложении]
      |                              |
@@ -59,7 +57,7 @@
      |                [WebSocket -> клиенты, тик 100 мс]
      |                              |
      |                              v  (по маркеру ROUND_END)
-     |                    [PostgreSQL: match_results]
+     |                   [Redis: история матчей]
 ```
 
 ### Ключевые решения
@@ -74,7 +72,7 @@
 
 ## 4. Функциональные требования
 
-### 4.1. Лобби (RabbitMQ + Redis)
+### 4.1. Лобби (Redis)
 
 **Redis:**
 
@@ -82,7 +80,7 @@
 - `HSET lobby:global:ready {nickname -> true/false}`
 - `SET lobby:global:phase waiting|starting|running|finished`
 
-**RabbitMQ:** fanout exchange `lobby-events`. Событие является **только триггером**: обработчик перечитывает состояние из Redis и рассылает снимок клиентам по `/ws/lobby`. RabbitMQ payload не источник истины.
+**Рассылка событий:** RabbitMQ не используется. Любое изменение лобби (вход, готовность, старт) публикует внутреннее событие приложения (`ApplicationEventPublisher`). Обработчик **перечитывает состояние из Redis** и рассылает снимок всем сессиям `/ws/lobby`. Событие является только триггером, источник истины Redis. Это работает на одном инстансе; для нескольких понадобился бы Redis Pub/Sub.
 
 **Логика:**
 
@@ -120,7 +118,7 @@
 В момент `endAt + 1 с` (запас на запросы, уже прошедшие валидацию) планировщик публикует в тот же топик маркер `ROUND_END{roundId}`. Поскольку партиция одна, когда консьюмер дошёл до маркера, **все клики раунда уже обработаны**. Только тогда он:
 
 1. читает финальный `ZREVRANGE leaderboard:{roundId} 0 -1 WITHSCORES`;
-2. записывает результат в PostgreSQL;
+2. записывает результат в историю матчей в Redis (п. 4.6);
 3. ставит `phase = finished` и отправляет клиентам событие «раунд завершён».
 
 Финальный экран берёт данные из `GET /api/round/{roundId}/results`. Читать итоги по таймеру без маркера запрещено: часть кликов ещё может быть в очереди.
@@ -131,9 +129,15 @@
 - WebSocket `/ws/leaderboard`. Изменения аккумулируются, снимок отправляется **не чаще раза в 100 мс** (по одному обновлению на клик не слать).
 - При 5-10 игроках проблем нет; при росте числа подписчиков рассмотреть WebFlux или лимит сессий (отметить в README).
 
-### 4.6. PostgreSQL
+### 4.6. История матчей (Redis)
 
-`match_results(round_id UUID, nickname VARCHAR, score INT, finished_at TIMESTAMP, winner BOOLEAN)`. Миграции через Flyway.
+История хранится в Upstash Redis (персистентный тир). Консьюмер пишет её **один раз**, при обработке маркера `ROUND_END`, атомарно (`MULTI/EXEC` или Lua):
+
+- `HSET match:{roundId} finishedAt {время} winner {nickname} total {сумма кликов}`;
+- ZSET `leaderboard:{roundId}` остаётся как есть и служит итоговой таблицей матча;
+- `ZADD matches:history {finishedAtEpoch} {roundId}`: индекс матчей по времени.
+
+Чтение: `GET /api/matches` (последние N через `ZREVRANGE matches:history`) и `GET /api/round/{roundId}/results` (`HGETALL match:{roundId}` + `ZREVRANGE leaderboard:{roundId} 0 -1 WITHSCORES`). Повторная обработка `ROUND_END` перезаписывает те же значения, поэтому запись идемпотентна. Ключи `dedup:*` живут 24 часа; `match:*`, `leaderboard:*` и `matches:history` без TTL (около 1 КБ на матч).
 
 ## 5. Graceful Shutdown и надёжность
 
@@ -150,10 +154,8 @@
 | Сервис | Лимит | Влияние |
 | --- | --- | --- |
 | Aiven Kafka | 250 KiB/s; ограниченное число топиков и партиций; retention 3 дня; отключается после 24 ч без трафика | 50 кликов/с мелких JSON с запасом. Перед демо «прогреть» |
-| Upstash Redis | 500K команд/мес, 250 MB, 10K команд/с | С Lua `SET NX` + `ZINCRBY` это одна команда (`EVAL`) на клик; приложить расчёт бюджета в README |
-| CloudAMQP Little Lemur | 1M сообщений/мес, 20 соединений | События лобби редкие, не проблема |
-| Render PostgreSQL | Удаляется через 30 дней, без бэкапов | Для демо ок; в README предупреждение. Альтернатива Neon: меняется только `spring.datasource.url` |
-| Render Web Service | 512 MB RAM, 0.1 CPU, засыпает через 15 мин | Cold start между раундами возможен. 0.1 CPU может стать узким местом на TLS и Tomcat: замерить ботами |
+| Upstash Redis | 500K команд/мес, 250 MB, 10K команд/с | Около 3 600 команд на раунд (3 000 `EVAL` на клики + до 600 `ZREVRANGE` на тики лидерборда), то есть порядка 130 раундов в месяц. Токены игроков кешировать в памяти. История матчей занимает единицы килобайт. Расчёт приложить к README |
+| Render Web Service | 512 MB RAM, 0.1 CPU, засыпает через 15 мин | Cold start между раундами возможен. 0.1 CPU может быть узким местом на TLS и Tomcat: замерить ботами |
 
 ## 7. План на 8 часов
 
@@ -161,12 +163,12 @@
 
 | Время | Блок | Результат |
 | --- | --- | --- |
-| 0:00-0:45 | **Скелет и инфраструктура** | Монорепо; `backend/` на Gradle (Kotlin DSL, toolchain 25); `docker-compose.yml` (Kafka KRaft, Redis, RabbitMQ, PostgreSQL); регистрация Aiven, CloudAMQP, Upstash, Postgres; `application.yml` с профилями `local`/`prod`, секреты только через env |
-| 0:45-2:00 | **Лобби** | `/api/lobby/join`, `/api/lobby/ready`, Redis-структуры, fanout `lobby-events`, `/ws/lobby`, атомарный старт, `startAt`/`roundEndTime` |
+| 0:00-0:45 | **Скелет и инфраструктура** | Монорепо; `backend/` на Gradle (Kotlin DSL, toolchain 25); `docker-compose.yml` (Kafka KRaft, Redis); регистрация Aiven и Upstash; `application.yml` с профилями `local`/`prod`, секреты только через env |
+| 0:45-2:00 | **Лобби** | `/api/lobby/join`, `/api/lobby/ready`, Redis-структуры, внутреннее событие + `/ws/lobby`, атомарный старт, `startAt`/`roundEndTime` |
 | 2:00-3:30 | **Клики и Kafka** | `POST /api/click`, продюсер с `.get()`, консьюмер с `AckMode.MANUAL`, Lua-скрипт dedup+ZINCRBY, retry → DLQ |
-| 3:30-4:30 | **Лидерборд и конец раунда** | `/ws/leaderboard` с тиком 100 мс, маркер `ROUND_END`, запись в PostgreSQL, `GET /api/round/{id}/results` |
+| 3:30-4:30 | **Лидерборд и конец раунда** | `/ws/leaderboard` с тиком 100 мс, маркер `ROUND_END`, запись истории матчей в Redis, `GET /api/round/{id}/results`, `GET /api/matches` |
 | 2:00-5:30 (параллельно) | **Фронтенд** | Экран лобби (никнейм, список, «ГОТОВ»), игровой экран (кнопка, таймер по `startAt`/`endAt`, живой лидерборд), финал. `crypto.randomUUID()` до отправки, ретрай по таймауту |
-| 4:30-6:00 | **Тесты и боты** | Один интеграционный тест на Testcontainers: 5 игроков, дубли UUID, проверка инварианта из п. 5. Скрипт ботов (`bots/`): 5 ботов, join, ready, 10 кликов/с |
+| 4:30-6:00 | **Тесты и боты** | Один интеграционный тест на Testcontainers (Kafka + Redis): 5 игроков, дубли UUID, проверка инварианта из п. 5. Скрипт ботов (`bots/`): 5 ботов, join, ready, 10 кликов/с |
 | 6:00-7:00 | **Dockerfile и деплой** | Multi-stage: образ Gradle с JDK 25 → `./gradlew bootJar` → JRE 25 slim; сначала копируются `build.gradle.kts`, `settings.gradle.kts`, `gradle/` для кеша зависимостей. Деплой на Render |
 | 7:00-8:00 | **Прогон и README** | Прогон ботов против Render, `kill -15` посреди раунда, фиксация метрик; README на русском |
 
@@ -181,7 +183,7 @@
 - [ ] Итоговые счета совпадают с числом уникальных подтверждённых (`202`) кликов: итог фиксируется только после маркера `ROUND_END`.
 - [ ] При `kill -15` во время раунда после перезапуска ни один уникальный `clickUUID`, попавший в Kafka, не потерян.
 - [ ] Новый игрок во время раунда получает `423 Locked`.
-- [ ] Результат раунда сохранён в PostgreSQL и доступен по REST.
+- [ ] Результат раунда сохранён в Redis (история матчей), доступен по REST (\`/api/round/{id}/results\`, \`/api/matches\`) и переживает рестарт приложения.
 - [ ] `./gradlew build` и `./gradlew test` проходят из чистого клона.
 - [ ] README содержит схему, расчёт бюджета Upstash, таблицу лимитов, обоснование Virtual Threads и отказа от CQRS.
 
@@ -189,7 +191,7 @@
 
 1. **Запрещён** async-handoff в Kafka-листенере (`executor.submit()` + возврат из метода): офсет коммитится до обработки, при остановке клик теряется.
 2. **Запрещено** генерировать `clickUUID` на бэкенде: только на фронте до отправки.
-3. **Запрещено** использовать RabbitMQ payload как единственный источник истины. Только триггер «перечитай Redis».
+3. **Запрещено** использовать payload события лобби как единственный источник истины. Только триггер «перечитай Redis».
 4. **Запрещено** хранить `dedup:*` без TTL.
 5. **Запрещено** раздельно вызывать `SET NX` и `ZINCRBY`: только одним Lua-скриптом.
 6. **Запрещено** читать итоги раунда по таймеру без ожидания маркера `ROUND_END`.

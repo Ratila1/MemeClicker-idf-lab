@@ -1,0 +1,24 @@
+spring:
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    security:
+      protocol: SSL
+    ssl:
+      bundle: aiven
+  ssl:
+    bundle:
+      pem:
+        aiven:
+          truststore:
+            certificate: ${KAFKA_CA_PEM}
+          keystore:
+            certificate: ${KAFKA_CERT_PEM}
+            private-key: ${KAFKA_KEY_PEM}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:default}
+      password: ${REDIS_PASSWORD}
+      ssl:
+        enabled: true
