@@ -31,46 +31,14 @@ services:
       timeout: 3s
       retries: 5
 
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: clicker
-      POSTGRES_USER: clicker
-      POSTGRES_PASSWORD: clicker
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clicker -d clicker"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      SPRING_PROFILES_ACTIVE: docker
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/clicker
-      SPRING_DATASOURCE_USERNAME: clicker
-      SPRING_DATASOURCE_PASSWORD: clicker
       PORT: 8080
     ports:
       - "8080:8080"
@@ -78,10 +46,6 @@ services:
       kafka:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      postgres:
         condition: service_healthy
 
   frontend:
@@ -92,6 +56,3 @@ services:
       - "5173:80"
     depends_on:
       - backend
-
-volumes:
-  pgdata:

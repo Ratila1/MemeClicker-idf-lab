@@ -10,7 +10,7 @@ import type { Session, LobbySnapshot, RoundInfo } from "../types";
 
 interface Props {
   session: Session | null;
-  onSession: (s: Session) => void;
+  onSession: (s: Session | null) => void;
   onRoundStart: (r: RoundInfo) => void;
 }
 
@@ -187,14 +187,27 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
           </motion.ul>
 
           {session && (
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={handleReady}
-              disabled={!canReady}
-              className="w-full rounded-xl bg-accent px-5 py-3 font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
-            >
-              {me?.ready ? "Ожидание других игроков..." : "ГОТОВ"}
-            </motion.button>
+            <div className="flex gap-3">
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                onClick={handleReady}
+                disabled={!canReady}
+                className="flex-1 rounded-xl bg-accent px-5 py-3 font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
+              >
+                {me?.ready ? "Ожидание других игроков..." : "ГОТОВ"}
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                onClick={() => {
+                  clearSession();
+                  onSession(null);
+                  setNickname("");
+                }}
+                className="rounded-xl bg-slate-700 px-4 py-3 font-semibold text-white hover:bg-slate-600 transition"
+              >
+                Выйти
+              </motion.button>
+            </div>
           )}
 
           <p className="text-xs text-slate-500 mt-4 text-center">
