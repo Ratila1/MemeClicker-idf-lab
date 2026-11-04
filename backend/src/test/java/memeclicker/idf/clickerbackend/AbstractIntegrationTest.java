@@ -20,7 +20,9 @@ import org.testcontainers.utility.DockerImageName;
         })
 public abstract class AbstractIntegrationTest {
 
-    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka:3.9.0"));
+    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka:3.8.1"));
+    // 3.9.0 не подходит: её kafka-storage format валидирует advertised.listeners
+    // до того, как Testcontainers их подставит, и падает на 0.0.0.0.git diff backend/src/test
 
     @SuppressWarnings("resource")
     static final GenericContainer<?> REDIS = new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
