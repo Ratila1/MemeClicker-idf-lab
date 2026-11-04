@@ -10,18 +10,13 @@ spring:
       pem:
         aiven:
           truststore:
-            certificate: ${KAFKA_CA_PEM}
+            certificate: file:/etc/secrets/ca.pem
           keystore:
-            certificate: ${KAFKA_CERT_PEM}
-            private-key: ${KAFKA_KEY_PEM}
+            certificate: file:/etc/secrets/service.cert
+            private-key: file:/etc/secrets/service.key
   data:
     redis:
-      host: ${REDIS_HOST}
-      port: ${REDIS_PORT:6379}
-      username: ${REDIS_USERNAME:default}
-      password: ${REDIS_PASSWORD}
-      ssl:
-        enabled: true
+      url: ${REDIS_URL}
 # На Aiven топики clicks и clicks.dlq (1 партиция) создаются вручную в консоли
 clicker:
   create-topics: false
