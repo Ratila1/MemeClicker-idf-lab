@@ -22,3 +22,6 @@ spring:
       password: ${REDIS_PASSWORD}
       ssl:
         enabled: true
+# На Aiven топики clicks и clicks.dlq (1 партиция) создаются вручную в консоли
+clicker:
+  create-topics: false
