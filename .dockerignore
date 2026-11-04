@@ -1,0 +1,14 @@
+**/.git
+**/.idea
+**/.vscode
+**/*.iml
+**/node_modules
+**/dist
+**/build
+**/.gradle
+**/*.log
+README.md
+TZ.md
+HELP.md
+project-info.txt
+docker-compose.yml
