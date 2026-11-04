@@ -205,3 +205,95 @@
 - [ ] Монорепо: `backend/`, `frontend/`, `bots/`, `docker-compose.yml`, `Dockerfile`, `README.md`; Gradle Wrapper (`gradlew`, `gradle/wrapper/`) закоммичен.
 - [ ] README на русском: архитектура, поток данных, Virtual Threads, отказ от CQRS, бюджет Redis, лимиты free tier, запуск (`./gradlew bootRun`) и запуск ботов.
 - [ ] Короткий нагрузочный отчёт: скрипт ботов, замеры задержки, подтверждение отсутствия потерь при `kill -15`.
+
+## 11. Приложение: контракт API
+
+Этот раздел общий для бэкенда, фронтенда и ботов: все трое пишут код строго по нему. Формат данных везде JSON, время везде **epoch в миллисекундах (UTC)**, `roundId` и `clickUUID` это UUID в виде строки.
+
+### 11.1. Общие правила
+
+- Токен игрока `playerToken` выдаётся при входе в лобби. REST принимает его в заголовке `X-Player-Token`, WebSocket в параметре `?token=`.
+- Любая ошибка (код 4xx или 5xx) возвращается в одном формате: `{ "error": "КОД", "message": "человекочитаемый текст" }`.
+- Никнейм: 1-20 символов, буквы, цифры, пробел, `_` и `-`. Сравнение без учёта регистра.
+- Минимум игроков для старта: 5 (значение `minPlayers` приходит в снимке лобби).
+
+### 11.2. REST
+
+| Метод и путь | Заголовок | Тело запроса | Успешный ответ | Ошибки |
+| --- | --- | --- | --- | --- |
+| `POST /api/lobby/join` | нет | `{ "nickname": "Vasya" }` | `200 { "playerToken": "uuid", "nickname": "Vasya" }` | `400 INVALID_REQUEST`, `409 NICKNAME_TAKEN`, `423 LOBBY_LOCKED` (идёт раунд) |
+| `POST /api/lobby/ready` | `X-Player-Token` | `{ "ready": true }` | `200` (пустое тело) | `401 UNAUTHORIZED`, `409 NOT_ENOUGH_PLAYERS` (меньше 5), `423 LOBBY_LOCKED` |
+| `GET /api/lobby` | нет | нет | `200` снимок лобби (см. 11.3, сообщение `lobby`) | нет |
+| `POST /api/click` | `X-Player-Token` | `{ "roundId": "uuid", "clickUUID": "uuid" }` | `202` (пустое тело) | `400 INVALID_REQUEST`, `401 UNAUTHORIZED`, `423 ROUND_NOT_RUNNING`, `503 KAFKA_UNAVAILABLE` |
+| `GET /api/round/{roundId}/results` | нет | нет | `200` результаты раунда (см. ниже) | `404 NOT_FOUND` (раунд неизвестен или ещё не завершён) |
+| `GET /api/matches?limit=20` | нет | нет | `200` массив последних матчей (см. ниже) | нет |
+
+**Правила для `POST /api/click`:**
+
+- `423 ROUND_NOT_RUNNING` возвращается, если `roundId` не совпадает с текущим, раунд ещё не начался (`now < startAt`) или уже закончился (`now >= endAt`). Клиент после этого кода кликов не шлёт.
+- `202` означает «клик принят Kafka» и возвращается **только после** подтверждения записи брокером. Дубликат `clickUUID` тоже получает `202`, потому что на уровне HTTP его не отличить, дедупликация происходит в консьюмере.
+- На `503`, таймаут или обрыв сети клиент **повторяет запрос с тем же `clickUUID`** (с небольшой паузой). Другие коды 4xx не повторяются.
+- Клиент не ждёт ответа перед следующим кликом: запросы идут параллельно, неподтверждённые хранятся в очереди для повторов.
+
+**Ответ `GET /api/round/{roundId}/results`:**
+
+```json
+{
+  "roundId": "uuid",
+  "finishedAt": 1767225600000,
+  "winner": "Vasya",
+  "players": [
+    { "rank": 1, "nickname": "Vasya", "score": 312 },
+    { "rank": 2, "nickname": "Petya", "score": 298 }
+  ]
+}
+```
+
+**Ответ `GET /api/matches`:** `[ { "roundId": "uuid", "finishedAt": 1767225600000, "winner": "Vasya", "total": 1530 } ]`, новые матчи первыми.
+
+### 11.3. WebSocket
+
+Оба эндпоинта обычные WebSocket (не STOMP), сообщения текстовые JSON, направление только сервер → клиент. При подключении сервер сразу присылает текущий снимок.
+
+**`/ws/lobby?token=...`**
+
+| Сообщение | Когда приходит | Пример |
+| --- | --- | --- |
+| `lobby` | при подключении и при любом изменении лобби | `{ "type": "lobby", "phase": "waiting", "minPlayers": 5, "canReady": true, "players": [ { "nickname": "Vasya", "ready": false } ], "serverTime": 1767225600000 }` |
+| `game-start` | когда все нажали «ГОТОВ» | `{ "type": "game-start", "roundId": "uuid", "startAt": 1767225603000, "endAt": 1767225663000, "serverTime": 1767225600000 }` |
+| `round-finished` | когда консьюмер обработал `ROUND_END` и результат записан | `{ "type": "round-finished", "roundId": "uuid" }` |
+
+Значение `phase`: `waiting`, `starting`, `running`, `finished`. `canReady` равно `true`, когда игроков не меньше `minPlayers`. Клиент стартует таймер и кнопку по `startAt`/`endAt`, пересчитав смещение часов как `serverTime - Date.now()`, а не «в момент получения сообщения».
+
+**`/ws/leaderboard?token=...`**
+
+| Сообщение | Когда приходит | Пример |
+| --- | --- | --- |
+| `leaderboard` | не чаще раза в 100 мс и только при изменениях | `{ "type": "leaderboard", "roundId": "uuid", "updatedAt": 1767225610000, "entries": [ { "nickname": "Vasya", "score": 42 } ] }` |
+| `round-finished` | то же событие, что в лобби | `{ "type": "round-finished", "roundId": "uuid" }` |
+
+После `round-finished` фронтенд запрашивает `GET /api/round/{roundId}/results` и показывает финальный экран. Итог из последнего сообщения `leaderboard` финальным считать нельзя: часть кликов может быть ещё в обработке.
+
+### 11.4. Сообщения Kafka
+
+Топик `clicks` (одна партиция), ключ сообщения `roundId`. Топик `clicks.dlq` получает те же сообщения, которые не удалось обработать за 3 попытки.
+
+```json
+{ "type": "click", "roundId": "uuid", "nickname": "Vasya", "clickUUID": "uuid", "receivedAt": 1767225610123 }
+{ "type": "round-end", "roundId": "uuid" }
+```
+
+`receivedAt` ставит бэкенд в момент приёма. Консьюмер считает клик, только если `receivedAt <= endAt` раунда.
+
+### 11.5. Ключи Redis
+
+| Ключ | Тип | Что хранит | TTL |
+| --- | --- | --- | --- |
+| `lobby:global:players` | hash | `nickname -> joinedAt` | нет |
+| `lobby:global:ready` | hash | `nickname -> true/false` | нет |
+| `lobby:global:phase` | string | `waiting`, `starting`, `running`, `finished` | нет |
+| `token:{playerToken}` | string | `nickname` | нет (чистится при выходе игрока и после раунда) |
+| `dedup:{roundId}:{clickUUID}` | string | `1` | 24 часа |
+| `leaderboard:{roundId}` | zset | `nickname -> score` | нет |
+| `match:{roundId}` | hash | `finishedAt`, `winner`, `total` | нет |
+| `matches:history` | zset | `roundId`, оценка = `finishedAt` | нет |
