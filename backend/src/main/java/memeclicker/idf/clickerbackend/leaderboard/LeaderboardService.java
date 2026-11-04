@@ -1,6 +1,7 @@
 package memeclicker.idf.clickerbackend.leaderboard;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -72,6 +73,11 @@ public class LeaderboardService {
                 }
             }
         }
+        // ZREVRANGE при равных очках ставит выше лексикографически БОЛЬШИЙ ник,
+        // а победитель (finish_round.lua) при ничьей — меньший. Сортируем так же,
+        // как выбирается победитель, чтобы первая строка всегда была победителем.
+        result.sort(Comparator.comparingLong(LeaderboardEntry::score).reversed()
+                .thenComparing(LeaderboardEntry::nickname));
         return result;
     }
 }
