@@ -18,3 +18,7 @@ coverage/
 *.iml
 .idea/
 project-info.txt
+
+front/vite.config.js
+front/vite.config.d.ts
+front/*.tsbuildinfo
