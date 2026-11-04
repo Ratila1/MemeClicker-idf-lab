@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, Users, SignIn } from "@phosphor-icons/react";
 import { joinLobby, setReady, getLobbySnapshot } from "../api/lobby";
-import { saveSession } from "../state/session";
+import { saveSession, clearSession } from "../state/session";
 import { useWebSocket } from "../ws/useWebSocket";
 import { setOffset } from "../utils/clock";
+import { wsUrl } from "../utils/ws";
 import type { Session, LobbySnapshot, RoundInfo } from "../types";
 
 interface Props {
   session: Session | null;
-  onSession: (s: Session) => void;
+  onSession: (s: Session | null) => void;
   onRoundStart: (r: RoundInfo) => void;
 }
 
@@ -29,9 +30,9 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
 
-  const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/lobby`;
-  useWebSocket({
-    url: wsUrl,
+  const url = wsUrl("/ws/lobby");
+  const { status: wsStatus } = useWebSocket({
+    url,
     onMessage: (msg: any) => {
       if (msg?.type === "lobby") setLobby(msg.data as LobbySnapshot);
       if (msg?.type === "game-start") {
@@ -60,6 +61,7 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
       saveSession(s);
       onSession(s);
     } catch (e: any) {
+      if (e?.status === 401) clearSession();
       setError(e?.message ?? "Не удалось войти");
     } finally {
       setJoining(false);
@@ -76,7 +78,8 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
   };
 
   const me = lobby?.players.find((p) => p.nickname === session?.nickname);
-  const canReady = (lobby?.players.length ?? 0) >= 5 && !me?.ready;
+  const minPlayers = lobby?.minPlayers ?? 5;
+  const canReady = (lobby?.players.length ?? 0) >= minPlayers && !me?.ready;
 
   return (
     <motion.div
@@ -184,18 +187,34 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
           </motion.ul>
 
           {session && (
-            <motion.button
-              whileTap={{ scale: 0.98 }}
-              onClick={handleReady}
-              disabled={!canReady}
-              className="w-full rounded-xl bg-accent px-5 py-3 font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
-            >
-              {me?.ready ? "Ожидание других игроков..." : "ГОТОВ"}
-            </motion.button>
+            <div className="flex gap-3">
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                onClick={handleReady}
+                disabled={!canReady}
+                className="flex-1 rounded-xl bg-accent px-5 py-3 font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 transition"
+              >
+                {me?.ready ? "Ожидание других игроков..." : "ГОТОВ"}
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.98 }}
+                onClick={() => {
+                  clearSession();
+                  onSession(null);
+                  setNickname("");
+                }}
+                className="rounded-xl bg-slate-700 px-4 py-3 font-semibold text-white hover:bg-slate-600 transition"
+              >
+                Выйти
+              </motion.button>
+            </div>
           )}
 
           <p className="text-xs text-slate-500 mt-4 text-center">
-            Нужно минимум 5 игроков для старта
+            Нужно минимум {minPlayers} игроков для старта
+          </p>
+          <p className="text-xs text-slate-600 mt-1 text-center">
+            Соединение: {wsStatus}
           </p>
         </motion.div>
       </div>

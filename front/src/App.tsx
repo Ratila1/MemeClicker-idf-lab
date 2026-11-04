@@ -4,7 +4,14 @@ import { LobbyScreen } from "./components/LobbyScreen";
 import { GameScreen } from "./components/GameScreen";
 import { FinalScreen } from "./components/FinalScreen";
 import { loadSession, clearSession } from "./state/session";
-import type { RoundInfo } from "./types";
+import type { RoundInfo, Session } from "./types";
+
+const MOCK_SESSION: Session = { nickname: "demo-player", playerToken: "demo-token" };
+const MOCK_ROUND: RoundInfo = {
+  roundId: "demo-round",
+  startAt: Date.now() + 3000,
+  roundEndTime: Date.now() + 63000,
+};
 
 type Screen = "lobby" | "game" | "final";
 
@@ -29,8 +36,34 @@ export default function App() {
     setScreen("lobby");
   };
 
+  const isDev = import.meta.env.DEV;
+
+  const useMock = (s: Screen) => {
+    if (s === "lobby") {
+      setSession(MOCK_SESSION);
+      setRound(null);
+    } else {
+      setSession(MOCK_SESSION);
+      setRound(MOCK_ROUND);
+    }
+    setScreen(s);
+  };
+
   return (
     <div className="min-h-[100dvh] bg-bg">
+      {isDev && (
+        <div className="fixed top-2 right-2 z-50 flex gap-2 bg-surface/80 backdrop-blur px-3 py-2 rounded-xl border border-border">
+          <button onClick={() => useMock("lobby")} className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">
+            Лобби
+          </button>
+          <button onClick={() => useMock("game")} className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">
+            Игра
+          </button>
+          <button onClick={() => useMock("final")} className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">
+            Финал
+          </button>
+        </div>
+      )}
       <AnimatePresence mode="wait">
         {screen === "lobby" && (
           <motion.div key="lobby" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>

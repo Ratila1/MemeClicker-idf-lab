@@ -14,10 +14,43 @@ export function FinalScreen({ round, onLeave }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getRoundResults(round.roundId)
-      .then(setResults)
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await getRoundResults(round.roundId);
+        if (!cancelled) {
+          setResults(r);
+          setLoading(false);
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+        if (e?.status === 404) {
+          if (import.meta.env.DEV) {
+            // dev: бэкенда нет, показываем mock
+            setResults({
+              roundId: round.roundId,
+              winner: "demo-player",
+              entries: [
+                { nickname: "demo-player", score: 42, winner: true },
+                { nickname: "alice", score: 31, winner: false },
+                { nickname: "bob", score: 18, winner: false },
+              ],
+              finishedAt: Date.now(),
+            });
+            setLoading(false);
+          } else {
+            // прод: итоги ещё не готовы — ретраим
+            setTimeout(poll, 1000);
+          }
+        } else {
+          setLoading(false);
+        }
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+    };
   }, [round.roundId]);
 
   if (loading) {
