@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+coverage/
+.idea/
+*.log
+.env
+.env.*
+!.env.example
+
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+*.dump
+*.backup
+*.bak
