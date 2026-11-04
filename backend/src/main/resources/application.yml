@@ -11,10 +11,15 @@ spring:
   kafka:
     producer:
       acks: all
+      # Ограниченный буфер продюсера: при перегрузе send() блокируется
+      # не дольше max.block.ms и клиент получает 503 вместо роста памяти.
+      buffer-memory: 4194304
       properties:
         enable.idempotence: true
         max.block.ms: 5000
         linger.ms: 1
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
     consumer:
       group-id: clicker
       enable-auto-commit: false
@@ -22,6 +27,7 @@ spring:
       max-poll-records: 50
     listener:
       ack-mode: manual
+      missing-topics-fatal: false
 
 server:
   port: ${PORT:8080}
@@ -32,3 +38,16 @@ management:
     web:
       exposure:
         include: health,info
+
+# Игровые параметры (см. ClickerProperties)
+clicker:
+  min-players: 5
+  start-delay: 3s
+  round-duration: 60s
+  round-end-grace: 1s
+  click-send-timeout: 2s
+  dedup-ttl-seconds: 86400
+  consumer-max-retries: 3
+  clicks-topic: clicks
+  dlq-topic: clicks.dlq
+  create-topics: true
