@@ -12,8 +12,16 @@ export async function apiFetch<T>(
     },
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new ApiError(res.status, text || res.statusText);
+    let message = res.statusText;
+    try {
+      const data = await res.json();
+      if (data?.message) message = data.message;
+      else if (data?.code) message = `${data.code}: ${data.message ?? ""}`.trim();
+    } catch {
+      const text = await res.text().catch(() => "");
+      if (text) message = text;
+    }
+    throw new ApiError(res.status, message);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -23,7 +31,7 @@ export class ApiError extends Error {
   status: number;
   body: string;
   constructor(status: number, body: string) {
-    super(`HTTP ${status}: ${body}`);
+    super(body);
     this.status = status;
     this.body = body;
   }

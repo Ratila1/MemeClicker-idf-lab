@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, Users, SignIn } from "@phosphor-icons/react";
 import { joinLobby, setReady, getLobbySnapshot } from "../api/lobby";
-import { saveSession } from "../state/session";
+import { saveSession, clearSession } from "../state/session";
 import { useWebSocket } from "../ws/useWebSocket";
 import { setOffset } from "../utils/clock";
+import { wsUrl } from "../utils/ws";
 import type { Session, LobbySnapshot, RoundInfo } from "../types";
 
 interface Props {
@@ -29,9 +30,9 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
 
-  const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/lobby`;
-  useWebSocket({
-    url: wsUrl,
+  const url = wsUrl("/ws/lobby");
+  const { status: wsStatus } = useWebSocket({
+    url,
     onMessage: (msg: any) => {
       if (msg?.type === "lobby") setLobby(msg.data as LobbySnapshot);
       if (msg?.type === "game-start") {
@@ -60,6 +61,7 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
       saveSession(s);
       onSession(s);
     } catch (e: any) {
+      if (e?.status === 401) clearSession();
       setError(e?.message ?? "Не удалось войти");
     } finally {
       setJoining(false);
@@ -76,7 +78,8 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
   };
 
   const me = lobby?.players.find((p) => p.nickname === session?.nickname);
-  const canReady = (lobby?.players.length ?? 0) >= 5 && !me?.ready;
+  const minPlayers = lobby?.minPlayers ?? 5;
+  const canReady = (lobby?.players.length ?? 0) >= minPlayers && !me?.ready;
 
   return (
     <motion.div
@@ -195,7 +198,10 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
           )}
 
           <p className="text-xs text-slate-500 mt-4 text-center">
-            Нужно минимум 5 игроков для старта
+            Нужно минимум {minPlayers} игроков для старта
+          </p>
+          <p className="text-xs text-slate-600 mt-1 text-center">
+            Соединение: {wsStatus}
           </p>
         </motion.div>
       </div>

@@ -4,6 +4,7 @@ import { Trophy, Lightning } from "@phosphor-icons/react";
 import { useWebSocket } from "../ws/useWebSocket";
 import { useClickQueue } from "../hooks/useClickQueue";
 import { serverNow } from "../utils/clock";
+import { wsUrl } from "../utils/ws";
 import type { Session, RoundInfo, LeaderboardEntry } from "../types";
 import { Leaderboard } from "./Leaderboard";
 
@@ -38,9 +39,9 @@ export function GameScreen({ round, session, onRoundEnd }: Props) {
     return () => clearInterval(id);
   }, [round]);
 
-  const wsUrl = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/leaderboard`;
-  useWebSocket({
-    url: wsUrl,
+  const url = wsUrl("/ws/leaderboard");
+  const { status: wsStatus } = useWebSocket({
+    url,
     onMessage: (msg: any) => {
       if (msg?.type === "leaderboard") {
         setLeaderboard(msg.data as LeaderboardEntry[]);
@@ -53,11 +54,13 @@ export function GameScreen({ round, session, onRoundEnd }: Props) {
 
   const canClick = timeLeft > 0;
 
-  const handleClick = () => {
+  const handleClick = async () => {
     if (!canClick) return;
-    click();
-    setClicks((c) => c + 1);
     setPulse((p) => p + 1);
+    const status = await click();
+    if (status === 202) {
+      setClicks((c) => c + 1);
+    }
   };
 
   return (
@@ -114,6 +117,7 @@ export function GameScreen({ round, session, onRoundEnd }: Props) {
         animate={{ y: 0, opacity: 1 }}
         className="w-full max-w-md glass rounded-3xl p-6"
       >
+        <p className="text-xs text-slate-500 mb-2 text-center">Соединение: {wsStatus}</p>
         <div className="flex items-center gap-2 mb-4 text-slate-300">
           <Trophy size={20} className="text-amber-400" />
           <span className="font-medium">Лидерборд</span>
