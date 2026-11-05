@@ -6,7 +6,10 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 
-/** Все составные операции с Redis выполняются Lua-скриптами атомарно. */
+/**
+ * Все составные операции с Redis выполняются Lua-скриптами (атомарно, один запрос).
+ * Spring Data Redis вызывает их через EVALSHA с откатом на EVAL.
+ */
 @Configuration
 public class RedisScripts {
 
@@ -35,15 +38,10 @@ public class RedisScripts {
         return script("scripts/finish_round.lua", Long.class);
     }
 
-    @Bean
-    RedisScript<Long> chatSendScript() {
-        return script("scripts/chat_send.lua", Long.class);
-    }
-
     private static <T> RedisScript<T> script(String path, Class<T> type) {
-        var script = new DefaultRedisScript<T>();
-        script.setLocation(new ClassPathResource(path));
-        script.setResultType(type);
-        return script;
+        var s = new DefaultRedisScript<T>();
+        s.setLocation(new ClassPathResource(path));
+        s.setResultType(type);
+        return s;
     }
 }

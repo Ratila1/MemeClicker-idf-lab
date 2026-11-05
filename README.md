@@ -1,172 +1,195 @@
 # MemeClicker
 
-Платформа соревновательного кликинга в реальном времени. Игроки заходят в общее лобби по никнейму. Когда в лобби минимум 5 человек и все нажали «ГОТОВ», у всех одновременно стартует 60-секундный раунд. Каждый клик проходит через Kafka, консьюмер учитывает его в Redis, лидерборд приходит по WebSocket.
+**MemeClicker** — браузерная игра на скорость кликов. Игроки входят в общее лобби, общаются в чате, готовятся к старту и соревнуются в 60-секундном раунде. Счёт обновляется в реальном времени, а после раунда игроки видят победителя и результаты.
 
-ТЗ: [`TZ.md`](TZ.md).
+> Техническое задание: [`TZ.md`](TZ.md)
 
-## Стек
+## Возможности
 
-Java 25, Spring Boot 4.0, Spring MVC + Virtual Threads, Gradle (Wrapper), React + Vite, Kafka (Aiven), Redis (Upstash), Testcontainers, Render (Docker).
+- Общее лобби с никнеймами, статусом готовности и минимумом игроков для старта.
+- Чат лобби через WebSocket. Имя автора берётся из серверного player token, а не из переданного клиентом ника; длина и частота сообщений ограничены.
+- Синхронный старт по серверному времени с анимированным пятисекундным отсчётом.
+- Раунд на 60 секунд, live-лидерборд, финальный экран с анимацией победителя.
+- Передача кликов через Kafka и атомарный учёт в Redis с дедупликацией по UUID.
+- Docker-сборка frontend и backend в одном образе; внешние Kafka и Redis.
+
+## Технологии
+
+| Слой | Технологии |
+| --- | --- |
+| Backend | Java 25, Spring Boot 4, Spring MVC, Virtual Threads, REST, WebSocket |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, Framer Motion |
+| События и состояние | Kafka, Redis, Redis Lua scripts |
+| Сборка и тесты | Gradle Wrapper, Docker multi-stage build, Testcontainers, GitHub Actions |
+| Размещение | Render Web Service + внешние Kafka и Redis (настройки приложения рассчитаны на Aiven и Upstash) |
 
 ## Архитектура
 
-```
-[React SPA] --REST--> [Spring MVC + Virtual Threads]
-     ^                        |
-     |<-----WebSocket---------+  /ws/lobby (лобби, game-start), /ws/leaderboard (лидерборд, round-end)
-     |                   +----+-----+
-     |                   v          v
-     |             [Redis]      [Kafka Producer]  acks=all, idempotence, .get(2 s)
-     |             (лобби)          |
-     |                              v
-     |                  [Kafka: clicks, 1 партиция]  клики + маркер ROUND_END
-     |                              |
-     |                              v
-     |              [Kafka Consumer, AckMode.MANUAL]
-     |                  Lua: SET NX dedup + ZINCRBY  -> ack
-     |                              |
-     |                              v
-     |                [тик 100 мс -> /ws/leaderboard]
-     |                              |
-     |                              v  (маркер ROUND_END)
-     |                   [Redis: история матчей] -> round-end
+```text
+┌─────────────────────┐      REST + WebSocket      ┌──────────────────────────┐
+│ React SPA           │ ◄────────────────────────► │ Spring Boot backend      │
+│ lobby / game / final│                             │ Spring MVC + Virtual     │
+└─────────────────────┘                             │ Threads                  │
+                                                    └────────────┬─────────────┘
+                                                                 │
+                        ┌────────────────────────────────────────┼───────────────┐
+                        │                                        │               │
+                        ▼                                        ▼               ▼
+                 ┌────────────┐                           ┌────────────────┐  WebSocket
+                 │ Redis      │                           │ Kafka          │  broadcasts
+                 │ lobby,     │◄──── consumer + Lua ──────│ clicks         │  lobby,
+                 │ scores,    │                           │ + ROUND_END    │  leaderboard,
+                 │ results    │                           �───────────────┘  round-end, chat
+                 └────────────┘
 ```
 
-### Поток данных
+### Поток игры
 
-1. **Лобби.** `POST /api/lobby/join` → `join.lua` (атомарно: проверка фазы, `HSETNX` ника, выдача `playerToken`). `POST /api/lobby/ready` → `ready.lua`: отмечает готовность и в том же скрипте проверяет «все готовы». Если все готовы, ставит `phase = starting` и записывает раунд. Два одновременных «ГОТОВ» не могут создать два раунда.
-2. **Старт.** Сервер шлёт в `/ws/lobby` событие `game-start {roundId, startAt, roundEndTime, serverTime}` с `startAt = now + 3 с`. Клиенты синхронизируют часы по `serverTime` и стартуют по `startAt`. В `startAt` серверный таймер ставит `phase = running`.
-3. **Клик.** `POST /api/click` (`X-Player-Token`, `{roundId, clickUUID}`): токен и окно раунда проверяются по кешу в памяти, без Redis. Сообщение `{roundId, nickname, clickUUID, receivedAt, endAt}` уходит в Kafka с `.get(2 с)`. Ответы: `202` (записан в Kafka), `423` (раунд не идёт), `400`, `401`, `503` (Kafka не успевает, повторите с тем же UUID).
-4. **Консьюмер.** Для каждого клика выполняется один Lua-скрипт: `SET dedup:{roundId}:{uuid} NX EX 86400`, и только если ключ создан, `ZINCRBY leaderboard:{roundId}`. Офсет коммитится после скрипта. Клики с `receivedAt > endAt` игнорируются.
-5. **Лидерборд.** Консьюмер помечает лидерборд «грязным». Раз в 100 мс, если были изменения, `ZREVRANGE` рассылается в `/ws/leaderboard`.
-6. **Конец раунда.** В `endAt + 1 с` таймер ждёт, пока завершатся уже принятые запросы `/api/click`, и публикует в тот же топик маркер `ROUND_END`. Партиция одна, поэтому, когда консьюмер дошёл до маркера, все клики раунда уже учтены. Только тогда `finish_round.lua` атомарно пишет `match:{roundId}`, `matches:history` и `phase = finished`, а клиенты получают `round-end`. Итоги по таймеру не читаются.
-7. **Новое лобби.** Первый `join` после завершённого раунда очищает лобби: игроки после финального экрана заходят заново, старые ники свободны. История матчей при этом не трогается.
+1. Клиент отправляет `POST /api/lobby/join` с никнеймом. Backend создаёт `playerToken`, записывает состояние игрока в Redis и возвращает токен.
+2. Клиенты подключаются к `/ws/lobby`: получают снимок лобби, обновления игроков и события чата. Чат-сообщение отправляется с токеном; backend проверяет токен и рассылает нормализованное сообщение подписчикам.
+3. После готовности достаточного числа игроков backend атомарно переводит лобби в `starting`, сохраняет `roundId`, `startAt` и `endAt` в Redis и рассылает `game-start`. Frontend синхронизирует часы и показывает обратный отсчёт до `startAt`.
+4. Во время раунда фронтенд отправляет `POST /api/click` с `X-Player-Token`, `roundId` и новым `clickUUID`. Backend проверяет токен и окно раунда, отправляет событие в Kafka и отвечает `202` только после подтверждения producer от брокера.
+5. Kafka consumer обрабатывает события по порядку. Lua-скрипт `scripts/click.lua` атомарно создаёт ключ дедупликации `SET NX` и увеличивает счёт в Redis Sorted Set только для нового UUID.
+6. Изменения счёта попадают в WebSocket-лидерборд. После окончания раунда backend помещает маркер `ROUND_END` в тот же Kafka-топик; consumer фиксирует итоги, когда доходит до маркера, и отправляет событие `round-end`.
+7. Игрок возвращается в главное меню через `POST /api/lobby/leave`. Игрок удаляется из лобби сразу; завершённое состояние раунда очищается, когда выходит последний участник. При следующем входе также предусмотрен сброс завершённого раунда.
 
-### API
+### Надёжность и границы гарантий
 
-| Метод | Ответ |
+- Producer настроен с `acks=all` и Kafka idempotence; API ждёт подтверждения отправки с ограниченным timeout. При проблеме отправки backend отвечает ошибкой, чтобы клиент мог повторить запрос с тем же UUID.
+- Клик считается принятым HTTP API после ответа `202`, но обновление таблицы происходит асинхронно consumer-ом.
+- Повторная обработка события безопасна для счёта: Redis Lua дедуплицирует `roundId + clickUUID`, а увеличение score происходит в той же атомарной операции.
+- Consumer подтверждает offset вручную после обработки. Для временных ошибок настроены повторы; после исчерпания попыток событие направляется в `clicks.dlq` для диагностики, а не автоматически засчитывается.
+- Очередь повторов клика на клиенте хранится в памяти браузера; она не переживает закрытие/перезагрузку страницы. Поэтому система защищает подтверждённые Kafka события от потери при штатном повторе обработки, но не обещает сохранность клика, который так и не был успешно отправлен.
+- В production топики `clicks` и `clicks.dlq` создаются заранее. Для порядка кликов и маркера раунда используется одна партиция.
+
+## API и realtime-события
+
+| Метод / канал | Назначение |
 | --- | --- |
-| `POST /api/lobby/join` `{nickname}` | `200 {playerToken}`, `409` ник занят, `423` идёт раунд, `400` |
-| `POST /api/lobby/ready` + `X-Player-Token` | `204`, `409` меньше 5 игроков, `423`, `401` |
-| `GET /api/lobby` | `{phase, players:[{nickname, ready, joinedAt}], minPlayers}` |
-| `POST /api/click` + `X-Player-Token` `{roundId, clickUUID}` | `202`, `400`, `401`, `423`, `503` |
-| `GET /api/round/{roundId}/results` | `{roundId, winner, entries:[{nickname, score, winner}], finishedAt}`, `404` пока нет маркера |
-| `GET /api/matches?limit=20` | `[{roundId, winner, total, finishedAt}]` |
+| `POST /api/lobby/join` `{ "nickname": "..." }` | Вход в лобби; возвращает `playerToken` |
+| `POST /api/lobby/ready` + `X-Player-Token` | Отметиться готовым |
+| `POST /api/lobby/leave` + `X-Player-Token` | Покинуть лобби и очистить завершённое лобби при выходе последнего игрока |
+| `GET /api/lobby` | Текущий снимок лобби |
+| `POST /api/click` + `X-Player-Token` | Принять клик `{ "roundId": "...", "clickUUID": "..." }` |
+| `GET /api/round/{roundId}/results` | Финальные результаты раунда |
+| `GET /api/matches?limit=20` | История матчей |
+| `GET /actuator/health` | Health check приложения |
 
-WebSocket-сообщения: `{"type": "...", "data": ...}`. Типы: `lobby`, `game-start` (`/ws/lobby`), `leaderboard`, `round-end` (`/ws/leaderboard`). При подключении сразу приходит текущий снимок, а если раунд уже идёт, то и `game-start` (переподключение после обновления страницы).
+Сообщения WebSocket используют оболочку `{"type":"...","data":...}`:
 
-### Ключи Redis
-
-| Ключ | Тип | TTL |
-| --- | --- | --- |
-| `lobby:global:players` | HASH ник → joinedAt | — |
-| `lobby:global:ready` | HASH ник → true/false | — |
-| `lobby:global:phase` | STRING waiting / starting / running / finished | — |
-| `lobby:global:round` | HASH roundId, startAt, endAt | — |
-| `lobby:global:tokens` | HASH playerToken → ник | — |
-| `dedup:{roundId}:{clickUUID}` | STRING | 24 ч |
-| `leaderboard:{roundId}` | ZSET ник → счёт | — |
-| `match:{roundId}` | HASH finishedAt, winner, total | — |
-| `matches:history` | ZSET finishedAt → roundId | — |
-
-Победитель — максимальный счёт; при равенстве лексикографически меньший ник (ZSET не хранит, кто набрал счёт раньше).
-
-## Надёжность
-
-- **Идемпотентность.** UUID клика генерирует фронт до отправки. Повтор с тем же UUID (ретрай фронта или повторная доставка из Kafka) отсекается `SET NX` внутри того же Lua-скрипта, что делает `ZINCRBY`.
-- **Backpressure.** Клик отвечает только после подтверждения брокера (`acks=all`). Буфер продюсера ограничен (`buffer.memory = 4 МБ`, `max.block.ms = 5 с`), ожидание ответа 2 с. Если Kafka не успевает, клиент получает `503` и повторяет клик с тем же UUID; очередь в памяти не растёт. WebSocket-сессии обёрнуты в `ConcurrentWebSocketSessionDecorator` (лимит 1 с / 64 КБ), медленный клиент отключается.
-- **Graceful shutdown.** `server.shutdown=graceful`, 30 с на фазу. Листенер обрабатывает записи синхронно и коммитит офсет после Lua. Убили до коммита: Kafka отдаст запись снова, дубль отсечёт dedup. Продюсер при закрытии делает flush.
-- **Рестарт посреди раунда.** При старте приложение читает `phase` и `lobby:global:round` из Redis, восстанавливает кеш и таймеры. Если время раунда уже вышло, маркер публикуется сразу; повторный маркер ничего не ломает.
-- **Ошибки консьюмера.** Redis недоступен: офсет не коммитится, запись перечитывается. После 3 повторов (через 500 мс) она уходит в `clicks.dlq` и коммитится, чтобы не блокировать партицию. Нечитаемые сообщения сразу уходят в DLQ.
-
-**Инвариант:** число уникальных `clickUUID` с ответом `202` = `ZSCORE` игрока = число уникальных кликов в Kafka до маркера `ROUND_END`. Проверяется интеграционным тестом и ботами.
-
-## Почему Virtual Threads, а не WebFlux
-
-Нагрузка маленькая (5-10 игроков, ~50 кликов/с). Клиенты Kafka (`KafkaTemplate.send().get()`) и Redis используются блокирующе, и именно блокирующий `.get()` даёт простой backpressure: поток ждёт подтверждения брокера, а виртуальный поток при этом почти ничего не стоит. Код остаётся обычным императивным Spring MVC, ошибки видны в нормальных стектрейсах. WebFlux дал бы выигрыш на тысячах одновременных соединений, но потребовал бы реактивных клиентов и усложнил отладку. При росте числа подписчиков WebSocket стоит рассмотреть WebFlux или лимит сессий.
-
-## Почему без CQRS
-
-Запись и чтение уже разделены инфраструктурно: команды (клики) идут в Kafka, а чтение (лидерборд, итоги) идёт из Redis ZSET, который обновляет консьюмер. Отдельные модели команд и запросов, шины и проекции на этой нагрузке ничего не дают, кроме лишнего кода и мест для ошибок. Если появятся несколько видов проекций (статистика, рейтинги за сезон), их можно добавить отдельными консьюмерами того же топика.
-
-## Бюджет Upstash (500K команд/мес, 10K команд/с)
-
-| Источник | Команд на раунд |
+| Endpoint | Типы сообщений |
 | --- | --- |
-| Клики: 5 игроков × 10/с × 60 с, один `EVAL` на клик | ~3 000 |
-| Тики лидерборда: ≤ 10/с × 60 с, только если были изменения и есть подписчики | ≤ 600 |
-| Лобби: 5 × (`join` + снимок 3 команды) + 5 × (`ready` + снимок) | ~40 |
-| Старт, `ROUND_END`, итоги, финальный экран (5 × 2) | ~15 |
-| **Итого** | **~3 650** |
+| `/ws/lobby` | `lobby`, `game-start`, `chat` |
+| `/ws/leaderboard` | `leaderboard`, `round-end` |
 
-500 000 / 3 650 ≈ **135 раундов в месяц**. Токены игроков и состояние раунда кешируются в памяти, поэтому клик не делает лишних запросов в Redis. История матчей занимает около 1 КБ на матч.
+Формат входящего сообщения чата: `{"type":"chat","data":{"token":"...","text":"..."}}`. Сервер ограничивает длину текста 300 символами и интервал отправки с одного соединения — 500 мс. История чата сейчас не сохраняется: сообщения видят подключённые клиенты.
 
-## Лимиты бесплатных тиров
+## Данные Redis
 
-Условия меняются, перед демо проверить актуальные.
-
-| Сервис | Лимит | Влияние |
+| Ключ | Тип | Назначение |
 | --- | --- | --- |
-| Aiven Kafka | ~250 KiB/s, ограничено число топиков и партиций, retention 3 дня, выключается после 24 ч без трафика | 50 кликов/с по ~150 байт — с большим запасом. Перед демо прогреть |
-| Upstash Redis | 500K команд/мес, 256 MB, 10K команд/с | ~135 раундов в месяц, см. расчёт |
-| Render Web Service | 512 MB RAM, 0.1 CPU, засыпает через 15 мин | Cold start; 0.1 CPU может быть узким местом на TLS. Прогреть перед раундом, не деплоить во время раунда |
+| `lobby:global:players` | HASH | Никнейм → время входа |
+| `lobby:global:ready` | HASH | Никнейм → статус готовности |
+| `lobby:global:phase` | STRING | Состояние `waiting`, `starting`, `running` или `finished` |
+| `lobby:global:round` | HASH | `roundId`, `startAt`, `endAt` |
+| `lobby:global:tokens` | HASH | Player token → никнейм |
+| `dedup:{roundId}:{clickUUID}` | STRING с TTL | Идемпотентность клика |
+| `leaderboard:{roundId}` | ZSET | Никнейм → число клико�� |
+| `match:{roundId}` | HASH | Сохранённые итоги завершённого матча |
+| `matches:history` | ZSET | История матчей по времени завершения |
 
-## Запуск локально
+Основные Redis-операции лобби и кликов вынесены в `backend/src/main/resources/scripts/*.lua`, чтобы составные изменения выполнялись атомарно.
 
-Нужны JDK 25 и Docker.
+## Структура репозитория
+
+```text
+backend/
+  src/main/java/.../click/       REST, Kafka producer и consumer кликов
+  src/main/java/.../lobby/       вход, готовность, токены и выход из лобби
+  src/main/java/.../round/       планирование раундов и фиксация результатов
+  src/main/java/.../leaderboard/ чтение и рассылка таблицы лидеров
+  src/main/java/.../ws/          WebSocket handlers и каналы
+  src/main/resources/            профили Spring и Redis Lua scripts
+front/
+  src/api/                       REST-клиент
+  src/components/                экраны лобби, игры и результатов
+  src/hooks/                     очередь кликов и синхронизация времени
+  src/ws/                        WebSocket-клиент
+bots/                            Java и Node.js боты для проверки игры
+Dockerfile                       multi-stage сборка React + Spring Boot
+ docker-compose.yml              запуск приложения с внешними Kafka/Redis
+.github/workflows/ci.yml         backend/frontend checks и Docker build
+```
+
+## Локальная разработка
+
+Требуются JDK 25, Node.js 22, Docker (для Testcontainers) и доступные Kafka/Redis. Профиль `local` ожидает Kafka на `localhost:9094` и Redis на `localhost:6379`.
+
+> Важно: текущий `docker-compose.yml` описывает **только приложение** и подключается к внешним Kafka и Redis. Он не поднимает локальные сервисы Kafka/Redis. Для локального запуска сначала запустите их отдельно или используйте собственную конфигурацию.
+
+Запуск backend и frontend в разных терминалах:
 
 ```bash
-docker compose up -d kafka kafka-init redis   # Kafka на localhost:9094, Redis на 6379
 cd backend
-./gradlew bootRun                             # http://localhost:8080, профиль local
+./gradlew bootRun
 ```
-
-Фронт в режиме разработки (проксирует `/api` и `/ws` на 8080):
 
 ```bash
-cd front && npm install && npm run dev        # http://localhost:5173
+cd front
+npm ci
+npm run dev
 ```
 
-Всё в Docker (фронт собирается внутрь jar): `docker compose up --build`, затем http://localhost:8080.
+Откройте `http://localhost:5173`. Vite проксирует `/api` и `/ws` на backend `localhost:8080`.
 
-Тесты (Testcontainers поднимает Kafka и Redis сам, нужен Docker):
+С��орка и тесты backend (Testcontainers использует Docker):
 
 ```bash
-cd backend && ./gradlew build
+cd backend
+./gradlew build
 ```
 
-## Боты
+Сборка frontend:
+
+```bash
+cd front
+npm ci
+npm run build
+```
+
+## Docker и деплой
+
+Корневой `Dockerfile` собирает frontend в Node-этапе, копирует результат в static resources Spring Boot, собирает JAR Gradle и запускает его в минимальном JRE-образе от непривилегированного пользователя. Порт приложения — `8080` или значение `PORT`.
+
+`docker-compose.yml` пригоден для запуска собранного сервиса при наличии внешних зависимостей. Он требует переменные `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_URL` и каталог `./secrets` с файлами Kafka `ca.pem`, `service.cert`, `service.key`.
+
+Для Render Web Service используйте Dockerfile в корне репозитория и production-профиль. По текущему `application-prod.yml` backend ожидает:
+
+| Настройка | Значение |
+| --- | --- |
+| `SPRING_PROFILES_ACTIVE` | `prod` |
+| `KAFKA_BOOTSTRAP_SERVERS` | Адрес Aiven Kafka `host:port` |
+| Kafka PEM certificates | Файлы доступны приложению по путям `/etc/secrets/ca.pem`, `/etc/secrets/service.cert`, `/etc/secrets/service.key` |
+| `REDIS_URL` | URL подключения к Upstash Redis |
+
+Создайте в Aiven топики `clicks` и `clicks.dlq` с одной партицией. В production автосоздание топиков выключено (`clicker.create-topics: false`). В настройках Render укажите пути к secret files/volume, соответствующие указанным путям, и health check path `/actuator/health`.
+
+## Боты и ручная проверка
+
+Java-боты входят в лобби, ждут `game-start`, отправляют клики и сравнивают принятые клики с итоговым счётом:
 
 ```bash
 java bots/Bots.java http://localhost:8080 5 10
 java bots/Bots.java https://<app>.onrender.com 5 10
 ```
 
-Боты заходят в лобби, ждут `game-start`, кликают с заданной частотой (~5 % кликов дублируются с тем же UUID), повторяют `503` с тем же UUID, а после раунда сверяют `/results` со своими `202`. В конце выводятся статусы ответов, задержки p50/p95/p99 и проверка инварианта.
+Node.js-боты требуют Node.js 22+:
 
-## Деплой на Render
+```bash
+node bots/bots.mjs http://localhost:8080 5 10
+node bots/bots.mjs https://<app>.onrender.com 5 10
+```
 
-1. **Aiven Kafka:** создать топики `clicks` и `clicks.dlq` (1 партиция), скачать `ca.pem`, `service.cert`, `service.key`.
-2. **Upstash Redis:** создать базу, взять host, port и password.
-3. **Render:** Web Service из Dockerfile в корне репозитория. Переменные окружения:
+## CI
 
-| Переменная | Значение |
-| --- | --- |
-| `SPRING_PROFILES_ACTIVE` | `prod` |
-| `KAFKA_BOOTSTRAP_SERVERS` | `host:port` из Aiven |
-| `KAFKA_CA_PEM`, `KAFKA_CERT_PEM`, `KAFKA_KEY_PEM` | содержимое PEM-файлов |
-| `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | из Upstash (`REDIS_USERNAME` по умолчанию `default`) |
-
-Health check: `/actuator/health`.
-
-## Нагрузочный отчёт
-
-Заполнить после прогона ботов против Render:
-
-| Метрика | Значение |
-| --- | --- |
-| Ботов × кликов/с | 5 × 10 |
-| p50 / p95 / p99 `/api/click`, мс | |
-| Статусы (202 / 423 / 503) | |
-| Инвариант после раунда | |
-| `kill -15` посреди раунда: инвариант после рестарта | |
+GitHub Actions workflow `.github/workflows/ci.yml` запускается на push в `main` и pull request. Он отдельно собирает и тестирует backend, собирает frontend и проверяет Docker-образ. Docker job выполняет build с `push: false`: публикацию образа или деплой workflow не делает.

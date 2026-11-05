@@ -31,23 +31,20 @@ public class LobbyService {
     private final StringRedisTemplate redis;
     private final RedisScript<String> joinScript;
     private final RedisScript<String> readyScript;
+    private final RedisScript<Long> leaveScript;
     private final PlayerTokens tokens;
     private final RoundStateHolder rounds;
     private final RoundScheduler scheduler;
     private final ApplicationEventPublisher events;
     private final ClickerProperties props;
 
-    public LobbyService(StringRedisTemplate redis,
-                        RedisScript<String> joinScript,
-                        RedisScript<String> readyScript,
-                        PlayerTokens tokens,
-                        RoundStateHolder rounds,
-                        RoundScheduler scheduler,
-                        ApplicationEventPublisher events,
-                        ClickerProperties props) {
+    public LobbyService(StringRedisTemplate redis, RedisScript<String> joinScript, RedisScript<String> readyScript,
+                        RedisScript<Long> leaveScript, PlayerTokens tokens, RoundStateHolder rounds,
+                        RoundScheduler scheduler, ApplicationEventPublisher events, ClickerProperties props) {
         this.redis = redis;
         this.joinScript = joinScript;
         this.readyScript = readyScript;
+        this.leaveScript = leaveScript;
         this.tokens = tokens;
         this.rounds = rounds;
         this.scheduler = scheduler;
@@ -57,9 +54,7 @@ public class LobbyService {
 
     public String join(String rawNickname) {
         var nickname = rawNickname == null ? "" : rawNickname.trim();
-        if (!NICKNAME.matcher(nickname).matches()) {
-            throw ApiException.badRequest("Никнейм: 1-20 символов, буквы, цифры, _ или -");
-        }
+        if (!NICKNAME.matcher(nickname).matches()) throw ApiException.badRequest("Никнейм: 1-20 символов, буквы, цифры, _ или -");
         var token = UUID.randomUUID().toString();
         var result = redis.execute(joinScript,
                 List.of(RedisKeys.PLAYERS, RedisKeys.READY, RedisKeys.PHASE, RedisKeys.TOKENS, RedisKeys.ROUND),
@@ -78,11 +73,17 @@ public class LobbyService {
 
     public void leave(String token) {
         var nickname = tokens.resolve(token).orElseThrow(ApiException::unauthorized);
-        redis.opsForHash().delete(RedisKeys.PLAYERS, nickname);
-        redis.opsForHash().delete(RedisKeys.READY, nickname);
-        redis.opsForHash().delete(RedisKeys.TOKENS, token);
+        Long reset = redis.execute(leaveScript,
+                List.of(RedisKeys.PLAYERS, RedisKeys.READY, RedisKeys.TOKENS, RedisKeys.PHASE, RedisKeys.ROUND),
+                nickname, token);
         tokens.forget(token);
+        if (reset != null && reset == 1L) tokens.clear();
         events.publishEvent(new LobbyChangedEvent());
+    }
+
+    /** Resolve chat identity from the server-issued token; never trust a client-supplied nickname. */
+    public Optional<String> nicknameForToken(String token) {
+        return tokens.resolve(token);
     }
 
     public void ready(String token) {
@@ -96,8 +97,7 @@ public class LobbyService {
         switch (result) {
             case "LOCKED" -> throw ApiException.locked("Раунд уже стартует или идёт");
             case "NOT_IN_LOBBY" -> throw ApiException.unauthorized();
-            case "NOT_ENOUGH" -> throw ApiException.conflict("not_enough_players",
-                    "Нужно минимум " + props.minPlayers() + " игроков");
+            case "NOT_ENOUGH" -> throw ApiException.conflict("not_enough_players", "Нужно минимум " + props.minPlayers() + " игроков");
             case "OK" -> events.publishEvent(new LobbyChangedEvent());
             case "STARTED" -> {
                 log.info("round {} starts at {}, ends at {}", roundId, startAt, endAt);
@@ -112,18 +112,14 @@ public class LobbyService {
         Map<Object, Object> players = redis.opsForHash().entries(RedisKeys.PLAYERS);
         Map<Object, Object> ready = redis.opsForHash().entries(RedisKeys.READY);
         var list = new ArrayList<PlayerInfo>(players.size());
-        players.forEach((nick, joinedAt) -> list.add(new PlayerInfo(
-                nick.toString(),
-                "true".equals(String.valueOf(ready.get(nick))),
-                Long.parseLong(joinedAt.toString()))));
+        players.forEach((nick, joinedAt) -> list.add(new PlayerInfo(nick.toString(),
+                "true".equals(String.valueOf(ready.get(nick))), Long.parseLong(joinedAt.toString()))));
         list.sort(Comparator.comparingLong(PlayerInfo::joinedAt).thenComparing(PlayerInfo::nickname));
         return new LobbySnapshot(phase, list, props.minPlayers());
     }
 
-    /** game-start для клиента, подключившегося, пока раунд стартует или идёт. */
     public Optional<GameStart> activeRoundStart() {
-        return rounds.current()
-                .filter(r -> System.currentTimeMillis() < r.endAt())
-                .map(r -> new GameStart(r.roundId(), r.startAt(), r.endAt(), System.currentTimeMillis()));
+        return rounds.current().filter(round -> System.currentTimeMillis() < round.endAt())
+                .map(round -> new GameStart(round.roundId(), round.startAt(), round.endAt(), System.currentTimeMillis()));
     }
 }
