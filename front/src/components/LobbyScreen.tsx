@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, Users, SignIn } from "@phosphor-icons/react";
-import { joinLobby, setReady, getLobbySnapshot } from "../api/lobby";
+import { joinLobby, setReady, leaveLobby, getLobbySnapshot } from "../api/lobby";
 import {
   saveSession,
   clearSession,
@@ -63,6 +63,7 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
   const handleJoin = async (nick?: string) => {
     const value = (nick ?? nickname).trim();
     if (!value) return;
+    autoJoinAttempted.current = true;
     setJoining(true);
     setError(null);
     try {
@@ -245,12 +246,20 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
               </motion.button>
               <motion.button
                 whileTap={{ scale: 0.98 }}
-                onClick={() => {
+                disabled={joining}
+                onClick={async () => {
+                  if (session?.playerToken) {
+                    try {
+                      await leaveLobby(session.playerToken);
+                    } catch {
+                      // Даже при ошибке сети очищаем локальную сессию.
+                    }
+                  }
                   clearSession();
                   onSession(null);
-                  setNickname("");
+                  setNickname(loadSavedNickname() ?? "");
                 }}
-                className="rounded-xl bg-slate-700 px-4 py-3 font-semibold text-white hover:bg-slate-600 transition"
+                className="rounded-xl bg-slate-700 px-4 py-3 font-semibold text-white hover:bg-slate-600 transition disabled:opacity-50"
               >
                 Выйти
               </motion.button>

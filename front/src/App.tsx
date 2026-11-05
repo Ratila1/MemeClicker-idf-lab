@@ -4,6 +4,7 @@ import { LobbyScreen } from "./components/LobbyScreen";
 import { GameScreen } from "./components/GameScreen";
 import { FinalScreen } from "./components/FinalScreen";
 import { loadSession, clearSession } from "./state/session";
+import { leaveLobby } from "./api/lobby";
 import type { RoundInfo, Session } from "./types";
 
 const MOCK_SESSION: Session = { nickname: "demo-player", playerToken: "demo-token" };
@@ -29,7 +30,14 @@ export default function App() {
     setScreen("final");
   };
 
-  const handleLeave = () => {
+  const handleLeave = async () => {
+    if (session?.playerToken) {
+      try {
+        await leaveLobby(session.playerToken);
+      } catch {
+        // Игнорируем: локальную сессию всё равно очищаем.
+      }
+    }
     clearSession();
     setSession(null);
     setRound(null);

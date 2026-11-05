@@ -76,6 +76,15 @@ public class LobbyService {
         return token;
     }
 
+    public void leave(String token) {
+        var nickname = tokens.resolve(token).orElseThrow(ApiException::unauthorized);
+        redis.opsForHash().delete(RedisKeys.PLAYERS, nickname);
+        redis.opsForHash().delete(RedisKeys.READY, nickname);
+        redis.opsForHash().delete(RedisKeys.TOKENS, token);
+        tokens.forget(token);
+        events.publishEvent(new LobbyChangedEvent());
+    }
+
     public void ready(String token) {
         var nickname = tokens.resolve(token).orElseThrow(ApiException::unauthorized);
         var roundId = UUID.randomUUID().toString();

@@ -17,6 +17,13 @@ export async function setReady(token: string): Promise<void> {
   });
 }
 
+export async function leaveLobby(token: string): Promise<void> {
+  await apiFetch<void>("/api/lobby/leave", {
+    method: "POST",
+    headers: { "X-Player-Token": token },
+  });
+}
+
 export async function getLobbySnapshot(): Promise<LobbySnapshot> {
   return apiFetch<LobbySnapshot>("/api/lobby");
 }

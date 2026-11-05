@@ -30,6 +30,12 @@ public class LobbyController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/leave")
+    public ResponseEntity<Void> leave(@RequestHeader("X-Player-Token") String token) {
+        lobby.leave(token);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping
     public LobbySnapshot snapshot() {
         return lobby.snapshot();
