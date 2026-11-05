@@ -27,7 +27,6 @@ const item = {
 
 export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
   const [nickname, setNickname] = useState(() => loadSavedNickname() ?? "");
-  const [rememberNickname, setRememberNickname] = useState(true);
   const [lobby, setLobby] = useState<LobbySnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
@@ -72,8 +71,9 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
     setError(null);
     try {
       const joined = await joinLobby(clean);
-      if (rememberNickname) saveNickname(joined.nickname);
-      else clearSavedNickname();
+      // Always remember the nickname after a successful join so it is prefilled
+      // when the player returns to the main menu after the round.
+      saveNickname(joined.nickname);
       saveSession(joined);
       onSession(joined);
       setNickname(joined.nickname);
@@ -107,7 +107,7 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
     try {
       await leaveLobby(session.playerToken);
     } catch {
-      // Clear the local session even if the request fails.
+      // Clear the session but keep the saved nickname for the next visit.
     }
     clearSession();
     onSession(null);
@@ -172,10 +172,8 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
                     <SignIn size={19} />{joining ? "Входим…" : "Войти в лобби"}
                   </button>
                 </form>
-                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-500">
-                  <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={rememberNickname} onChange={(event) => setRememberNickname(event.target.checked)} /> Запомнить ник
-                  </label>
-                  {loadSavedNickname() && <button type="button" onClick={() => { clearSavedNickname(); setNickname(""); }} className="hover:text-slate-300">Забыть ник</button>}
+                <div className="mt-3 flex items-center justify-end text-xs text-slate-500">
+                  {loadSavedNickname() && <button type="button" onClick={() => { clearSavedNickname(); setNickname(""); }} className="hover:text-slate-300">Забыть сохранённый ник</button>}
                 </div>
               </div>
             ) : (
@@ -244,7 +242,7 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
                 <input value={chatText} onChange={(event) => setChatText(event.target.value)} maxLength={300} disabled={!session}
                   placeholder={session ? "Написать сообщение…" : "Войдите, чтобы писать в чат"}
                   className="min-w-0 flex-1 rounded-xl border border-white/[0.08] bg-slate-950/50 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-orange-400/50 disabled:opacity-50" />
-                <button type="submit" disabled={!session || !chatText.trim()} aria-label="Отправить сообщение"
+                <button type="submit" disabled={!session || !chatText.trim()} aria-label="��тправить сообщение"
                   className="grid w-12 shrink-0 place-items-center rounded-xl bg-orange-500 text-white transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"><PaperPlaneTilt size={19} weight="fill" /></button>
               </div>
               <p className="mt-2 text-[10px] text-slate-600">До 300 символов · без спама, пожалуйста</p>
