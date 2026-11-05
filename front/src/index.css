@@ -50,7 +50,7 @@
   width: clamp(150px, 17vw, 270px);
   max-height: 72vh;
   object-fit: contain;
-  opacity: 0.78;
+  opacity: 0.82;
   transform: translateY(-50%);
   filter: drop-shadow(0 18px 28px rgba(0, 0, 0, 0.42));
 }
@@ -64,9 +64,7 @@
 }
 
 @media (max-width: 1050px) {
-  .site-mascots {
-    display: none;
-  }
+  .site-mascots { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

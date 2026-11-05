@@ -33,8 +33,7 @@ public class ChatService {
     private final Json json;
     private final WsHub hub;
 
-    public ChatService(StringRedisTemplate redis,
-                       @Qualifier("chatSendScript") RedisScript<Long> chatSendScript,
+    public ChatService(StringRedisTemplate redis, @Qualifier("chatSendScript") RedisScript<Long> chatSendScript,
                        PlayerTokens tokens, Json json, WsHub hub) {
         this.redis = redis;
         this.chatSendScript = chatSendScript;
@@ -45,15 +44,13 @@ public class ChatService {
 
     public List<ChatMessage> history() {
         var stored = redis.opsForList().range(RedisKeys.CHAT_HISTORY, 0, MAX_HISTORY - 1L);
-        if (stored == null || stored.isEmpty()) {
-            return List.of();
-        }
+        if (stored == null || stored.isEmpty()) return List.of();
         var result = new ArrayList<ChatMessage>(stored.size());
         for (var value : stored) {
             try {
                 result.add(json.read(value, ChatMessage.class));
             } catch (RuntimeException ignored) {
-                // Повреждённую запись пропускаем, не ломая подключение к чату.
+                // Skip malformed persisted messages without failing the chat connection.
             }
         }
         Collections.reverse(result);
@@ -73,7 +70,7 @@ public class ChatService {
                         RedisKeys.chatLastSent(token), RedisKeys.chatLastText(token)),
                 json.write(message), Integer.toString(MAX_HISTORY), Long.toString(WINDOW_SECONDS),
                 Long.toString(WINDOW_MESSAGE_LIMIT), Long.toString(COOLDOWN_MILLIS),
-                Long.toString(LAST_TEXT_TTL_SECONDS));
+                Long.toString(LAST_TEXT_TTL_SECONDS), text);
 
         if (result == null || result == 0L) {
             throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "chat_rate_limited",
@@ -86,7 +83,7 @@ public class ChatService {
         return message;
     }
 
-    /** Вызывается после фиксации итогов: история раунда чистится у всех клиентов. */
+    /** Keep chat through the round and clear it only after the results are finalized. */
     public void clearAfterRound() {
         redis.delete(RedisKeys.CHAT_HISTORY);
         hub.chat().broadcast(hub.encode("chat-cleared", "{}"));

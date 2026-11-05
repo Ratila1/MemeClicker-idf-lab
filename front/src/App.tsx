@@ -6,14 +6,14 @@ import { FinalScreen } from "./components/FinalScreen";
 import { loadSession, clearSession } from "./state/session";
 import { leaveLobby } from "./api/lobby";
 import type { RoundInfo, Session } from "./types";
-import dogeImage from "./images/doge.png";
 import pepeImage from "./images/pepe.png";
+import dogeImage from "./images/doge.png";
 
 const MOCK_SESSION: Session = { nickname: "demo-player", playerToken: "demo-token" };
 const MOCK_ROUND: RoundInfo = {
   roundId: "demo-round",
-  startAt: Date.now() + 3000,
-  roundEndTime: Date.now() + 63000,
+  startAt: Date.now() + 5000,
+  roundEndTime: Date.now() + 65000,
 };
 
 type Screen = "lobby" | "game" | "final";
@@ -28,16 +28,14 @@ export default function App() {
     setScreen("game");
   };
 
-  const handleRoundEnd = () => {
-    setScreen("final");
-  };
+  const handleRoundEnd = () => setScreen("final");
 
   const handleLeave = async () => {
     if (session?.playerToken) {
       try {
         await leaveLobby(session.playerToken);
       } catch {
-        // Игнорируем: локальную сессию всё равно очищаем.
+        // Clear local state even if the request fails.
       }
     }
     clearSession();
@@ -46,36 +44,25 @@ export default function App() {
     setScreen("lobby");
   };
 
-  const isDev = import.meta.env.DEV;
-
   const useMock = (nextScreen: Screen) => {
-    if (nextScreen === "lobby") {
-      setSession(MOCK_SESSION);
-      setRound(null);
-    } else {
-      setSession(MOCK_SESSION);
-      setRound(MOCK_ROUND);
-    }
+    setSession(MOCK_SESSION);
+    setRound(nextScreen === "lobby" ? null : MOCK_ROUND);
     setScreen(nextScreen);
   };
 
   return (
     <div className="relative min-h-[100dvh] bg-bg">
       <div className="site-mascots" aria-hidden="true">
-        <img className="site-mascot site-mascot-left" src={dogeImage} alt="" />
-        <img className="site-mascot site-mascot-right" src={pepeImage} alt="" />
+        <img className="site-mascot site-mascot-left" src={pepeImage} alt="" />
+        <img className="site-mascot site-mascot-right" src={dogeImage} alt="" />
       </div>
-      {isDev && (
-        <div className="fixed top-2 right-2 z-50 flex gap-2 bg-surface/80 backdrop-blur px-3 py-2 rounded-xl border border-border">
-          <button onClick={() => useMock("lobby")} className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">
-            Лобби
-          </button>
-          <button onClick={() => useMock("game")} className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">
-            Игра
-          </button>
-          <button onClick={() => useMock("final")} className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">
-            Финал
-          </button>
+      {import.meta.env.DEV && (
+        <div className="fixed right-2 top-2 z-50 flex gap-2 rounded-xl border border-border bg-surface/80 px-3 py-2 backdrop-blur">
+          {(["lobby", "game", "final"] as Screen[]).map((next) => (
+            <button key={next} onClick={() => useMock(next)} className="rounded bg-slate-700 px-2 py-1 text-xs hover:bg-slate-600">
+              {next === "lobby" ? "Лобби" : next === "game" ? "Игра" : "Финал"}
+            </button>
+          ))}
         </div>
       )}
       <div className="relative z-10">
