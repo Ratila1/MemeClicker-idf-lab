@@ -1,5 +1,3 @@
-package memeclicker.idf.clickerbackend.ws;
-
 export type WsMessage =
   | { type: "lobby"; data: unknown }
   | { type: "leaderboard"; data: unknown }
