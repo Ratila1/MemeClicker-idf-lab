@@ -35,11 +35,11 @@
                         ┌────────────────────────────────────────┼───────────────┐
                         │                                        │               │
                         ▼                                        ▼               ▼
-                 ┌────────────┐                           ┌────────────┐  WebSocket
-                 │ Redis      │                           │ Kafka      │  broadcasts
-                 │ lobby,     │◄──── consumer + Lua ──────│ clicks     │  lobby,
-                 │ scores,    │                           │ + ROUND_END│  leaderboard,
-                 │ results    │                           ���────────────┘  round-end, chat
+                 ┌────────────┐                           ┌────────────────┐  WebSocket
+                 │ Redis      │                           │ Kafka          │  broadcasts
+                 │ lobby,     │◄──── consumer + Lua ──────│ clicks         │  lobby,
+                 │ scores,    │                           │ + ROUND_END    │  leaderboard,
+                 │ results    │                           �───────────────┘  round-end, chat
                  └────────────┘
 ```
 
