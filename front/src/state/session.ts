@@ -1,10 +1,13 @@
 import type { Session } from "../types";
 
-const KEY = "mc_session";
+const SESSION_KEY = "mc_session";
+const NICKNAME_KEY = "mc_nickname";
+
+const NICKNAME_RE = /^[\\p{L}\\p{N}_\\-]{1,20}$/u;
 
 export function loadSession(): Session | null {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as Session;
   } catch {
@@ -13,9 +16,31 @@ export function loadSession(): Session | null {
 }
 
 export function saveSession(s: Session): void {
-  localStorage.setItem(KEY, JSON.stringify(s));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
 }
 
 export function clearSession(): void {
-  localStorage.removeItem(KEY);
+  localStorage.removeItem(SESSION_KEY);
+}
+
+export function loadSavedNickname(): string | null {
+  try {
+    const raw = localStorage.getItem(NICKNAME_KEY);
+    if (!raw) return null;
+    const value = raw.trim();
+    if (!NICKNAME_RE.test(value)) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+export function saveNickname(nickname: string): void {
+  const value = nickname.trim();
+  if (!NICKNAME_RE.test(value)) return;
+  localStorage.setItem(NICKNAME_KEY, value);
+}
+
+export function clearSavedNickname(): void {
+  localStorage.removeItem(NICKNAME_KEY);
 }
