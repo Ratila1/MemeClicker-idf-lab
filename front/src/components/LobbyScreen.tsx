@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle, PaperPlaneTilt, SignIn, Users } from "@phosphor-icons/react";
+import { CheckCircle, Lightning, PaperPlaneTilt, SignIn, Trophy, Users } from "@phosphor-icons/react";
 import { joinLobby, setReady, leaveLobby, getLobbySnapshot } from "../api/lobby";
 import {
   saveSession,
@@ -45,7 +45,7 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
       }
       if (msg?.type === "game-start") {
         const data = msg.data;
-        setOffset(data.serverTime ?? data.startAt - 3000);
+        setOffset(data.serverTime ?? data.startAt - 5000);
         onRoundStart({
           roundId: data.roundId,
           startAt: data.startAt,
@@ -92,7 +92,6 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
     autoJoinAttempted.current = true;
     setNickname(saved);
     void handleJoin(saved);
-    // handleJoin intentionally uses the initial saved nickname.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
@@ -108,7 +107,7 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
     try {
       await leaveLobby(session.playerToken);
     } catch {
-      // Локальную сессию всё равно очищаем; серверная очистка безопасна при повторе.
+      // Clear the local session even if the request fails.
     }
     clearSession();
     onSession(null);
@@ -117,103 +116,147 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
 
   const me = lobby?.players.find((player) => player.nickname === session?.nickname);
   const minPlayers = lobby?.minPlayers ?? 5;
-  const canReady = (lobby?.players.length ?? 0) >= minPlayers && !me?.ready;
+  const playerCount = lobby?.players.length ?? 0;
+  const canReady = playerCount >= minPlayers && !me?.ready;
+  const waitingForPlayers = Math.max(0, minPlayers - playerCount);
+  const isConnected = wsStatus === "open";
 
   return (
-    <motion.main
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="min-h-[100dvh] flex items-center justify-center px-4 py-8"
-    >
-      <div className="w-full max-w-5xl">
-        <motion.header initial={{ y: -16, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="mb-8 text-center">
-          <h1 className="text-4xl md:text-6xl tracking-tighter font-bold">MemeClicker</h1>
-          <p className="text-slate-400 mt-2">Собирай команду. Готовься. Кликни быстрее всех.</p>
+    <main className="relative isolate min-h-[100dvh] overflow-hidden px-4 py-8 md:px-6 md:py-12">
+      <div aria-hidden className="lobby-glow pointer-events-none absolute inset-0" />
+      <div className="relative mx-auto w-full max-w-6xl">
+        <motion.header
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8 grid gap-6 md:grid-cols-[1fr_auto] md:items-end"
+        >
+          <div>
+            <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-orange-400/20 bg-orange-400/[0.07] px-3 py-1.5 text-xs font-semibold tracking-wide text-orange-200">
+              <span className={`h-2 w-2 rounded-full ${isConnected ? "bg-emerald-400" : "bg-amber-400 animate-pulse"}`} />
+              {isConnected ? "СЕРВЕР НА СВЯЗИ" : "ПОДКЛЮЧАЕМСЯ"}
+            </div>
+            <h1 className="text-5xl font-black tracking-[-0.06em] text-white sm:text-7xl">Meme<span className="text-orange-400">Clicker</span></h1>
+            <p className="mt-3 max-w-xl text-base text-slate-400 sm:text-lg">Собери команду, нажми «Готов» и докажи, что твой палец быстрее всех.</p>
+          </div>
+          <div className="flex gap-3 md:pb-1">
+            <div className="glass min-w-28 rounded-2xl px-4 py-3 text-center">
+              <div className="text-2xl font-black tabular-nums text-white">{playerCount}<span className="text-slate-500">/{minPlayers}</span></div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">игроков</div>
+            </div>
+            <div className="glass min-w-28 rounded-2xl px-4 py-3 text-center">
+              <div className="text-2xl font-black text-orange-300">60<span className="text-sm">с</span></div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">раунд</div>
+            </div>
+          </div>
         </motion.header>
 
         <AnimatePresence>
           {error && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-              className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-300 text-sm">
+              role="alert" className="mb-5 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
               {error}
             </motion.div>
           )}
         </AnimatePresence>
 
-        <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
-          <section className="glass rounded-3xl p-6">
-            {!session && (
-              <div className="mb-6">
-                <div className="flex gap-3">
-                  <input value={nickname} onChange={(event) => setNickname(event.target.value)}
-                    onKeyDown={(event) => event.key === "Enter" && void handleJoin()}
-                    placeholder="Ваш никнейм" maxLength={20}
-                    className="min-w-0 flex-1 rounded-xl bg-surface border border-border px-4 py-3 outline-none focus:border-accent" />
-                  <button onClick={() => void handleJoin()} disabled={joining}
-                    className="rounded-xl bg-accent px-5 py-3 font-semibold text-white flex items-center gap-2 hover:brightness-110 disabled:opacity-50">
-                    <SignIn size={20} />{joining ? "Вход..." : "Войти"}
+        <div className="grid items-stretch gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+          <section className="glass flex flex-col rounded-3xl p-5 sm:p-7">
+            {!session ? (
+              <div className="mb-7 rounded-2xl border border-white/[0.06] bg-slate-950/35 p-4 sm:p-5">
+                <p className="mb-3 text-sm font-semibold text-slate-200">Войди в игру</p>
+                <form onSubmit={(event) => { event.preventDefault(); void handleJoin(); }} className="flex flex-col gap-3 sm:flex-row">
+                  <input value={nickname} onChange={(event) => setNickname(event.target.value)} placeholder="Придумай никнейм" maxLength={20}
+                    className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-900/80 px-4 py-3 text-white outline-none transition placeholder:text-slate-600 focus:border-orange-400/60" />
+                  <button type="submit" disabled={joining || !nickname.trim()}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-3 font-bold text-white shadow-lg shadow-orange-500/15 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">
+                    <SignIn size={19} />{joining ? "Входим…" : "Войти в лобби"}
                   </button>
+                </form>
+                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-500">
+                  <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={rememberNickname} onChange={(event) => setRememberNickname(event.target.checked)} /> Запомнить ник
+                  </label>
+                  {loadSavedNickname() && <button type="button" onClick={() => { clearSavedNickname(); setNickname(""); }} className="hover:text-slate-300">Забыть ник</button>}
                 </div>
-                <div className="mt-3 flex justify-between text-xs text-slate-400">
-                  <label className="flex items-center gap-2"><input type="checkbox" checked={rememberNickname}
-                    onChange={(event) => setRememberNickname(event.target.checked)} /> Запомнить никнейм</label>
-                  {loadSavedNickname() && <button onClick={() => { clearSavedNickname(); setNickname(""); }}>Забыть</button>}
-                </div>
+              </div>
+            ) : (
+              <div className="mb-6 flex items-center justify-between rounded-2xl border border-emerald-400/15 bg-emerald-400/[0.05] p-4">
+                <div><p className="text-xs uppercase tracking-widest text-slate-500">Вы в игре как</p><p className="mt-1 text-lg font-bold text-white">{session.nickname}</p></div>
+                <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300">Игрок</span>
               </div>
             )}
 
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-slate-300"><Users size={20} /><span>Игроки ({lobby?.players.length ?? 0})</span></div>
-              <span className="text-xs uppercase tracking-widest text-slate-500">{lobby?.phase ?? "—"}</span>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div><h2 className="text-xl font-bold text-white">Комната ожидания</h2><p className="mt-1 text-sm text-slate-500">{lobby?.phase === "starting" ? "Все готовы — готовимся к старту" : "Игроки, которые сыграют в следующем раунде"}</p></div>
+              <span className="rounded-full border border-white/[0.08] bg-slate-950/30 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">{lobby?.phase ?? "подключение"}</span>
             </div>
 
-            <motion.ul initial="hidden" animate="show" className="space-y-2 mb-6">
-              <AnimatePresence>
-                {lobby?.players.map((player) => (
-                  <motion.li key={player.nickname} variants={item} layout initial="hidden" animate="show" exit={{ opacity: 0, x: -12 }}
-                    className="flex items-center justify-between rounded-xl bg-surface/60 px-4 py-3 border border-border/60">
-                    <span>{player.nickname}</span>
-                    {player.ready && <span className="text-emerald-400 flex items-center gap-1 text-sm"><CheckCircle size={18} weight="fill" />Готов</span>}
+            <div className="mb-5 h-1.5 overflow-hidden rounded-full bg-slate-800">
+              <motion.div initial={false} animate={{ width: `${Math.min(100, (playerCount / Math.max(1, minPlayers)) * 100)}%` }}
+                className="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-300" />
+            </div>
+
+            <motion.ul initial="hidden" animate="show" className="mb-6 flex-1 space-y-2">
+              <AnimatePresence initial={false}>
+                {lobby?.players.map((player, index) => (
+                  <motion.li key={player.nickname} variants={item} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -12 }}
+                    className="flex items-center justify-between rounded-2xl border border-white/[0.06] bg-slate-950/30 px-4 py-3.5">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-800 text-xs font-bold text-slate-400">{String(index + 1).padStart(2, "0")}</span>
+                      <span className="truncate font-semibold text-slate-200">{player.nickname}{player.nickname === session?.nickname && <span className="ml-2 text-xs font-normal text-orange-300">это вы</span>}</span>
+                    </div>
+                    {player.ready ? <span className="flex items-center gap-1.5 rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-semibold text-emerald-300"><CheckCircle size={16} weight="fill" /> Готов</span>
+                      : <span className="text-xs text-slate-500">Ожидает</span>}
                   </motion.li>
                 ))}
               </AnimatePresence>
-              {(!lobby || lobby.players.length === 0) && <li className="text-slate-500 text-sm py-4 text-center">Пока никого нет. Пригласи друзей!</li>}
+              {playerCount === 0 && <li className="rounded-2xl border border-dashed border-white/10 py-8 text-center text-sm text-slate-500">Пока пусто — заходи первым!</li>}
             </motion.ul>
 
-            {session && <div className="flex gap-3">
-              <button onClick={() => void setReady(session.playerToken).catch((e: any) => setError(e?.message ?? "Ошибка"))}
-                disabled={!canReady} className="flex-1 rounded-xl bg-accent px-5 py-3 font-semibold text-white disabled:opacity-40">
-                {me?.ready ? "Ожидание других игроков..." : "ГОТОВ"}
+            {session && <div className="flex flex-col gap-3 sm:flex-row">
+              <button onClick={() => void setReady(session.playerToken).catch((error: any) => setError(error?.message ?? "Не удалось отметить готовность"))}
+                disabled={!canReady || lobby?.phase !== "waiting"}
+                className="flex-1 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-3.5 font-bold text-white shadow-lg shadow-orange-500/15 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40">
+                {me?.ready ? "Ждём остальных игроков…" : "Я ГОТОВ — ПОЕХАЛИ!"}
               </button>
-              <button onClick={() => void handleLeave()} disabled={joining} className="rounded-xl bg-slate-700 px-4 py-3 font-semibold text-white hover:bg-slate-600">Выйти</button>
+              <button onClick={() => void handleLeave()} disabled={joining}
+                className="rounded-2xl border border-white/10 bg-slate-800/70 px-5 py-3.5 font-semibold text-slate-300 transition hover:bg-slate-700 disabled:opacity-50">Выйти</button>
             </div>}
-            <p className="text-xs text-slate-500 mt-4 text-center">Нужно минимум {minPlayers} игроков для старта</p>
-            <p className="text-xs text-slate-600 mt-1 text-center">Лобби: {wsStatus === "open" ? "подключено" : "переподключение…"}</p>
+            <p className="mt-4 flex items-center justify-center gap-2 text-center text-xs text-slate-500">
+              <Users size={15} />{waitingForPlayers > 0 ? `Ещё ${waitingForPlayers} ${waitingForPlayers === 1 ? "игрок" : "игрока"} до старта` : "Команда собрана — можно начинать"}
+            </p>
           </section>
 
-          <section className="glass rounded-3xl p-5 flex flex-col min-h-[360px]">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-semibold text-lg">Чат лобби</h2><span className="text-xs text-slate-500">{messages.length} сообщений</span>
+          <section className="glass flex min-h-[440px] flex-col overflow-hidden rounded-3xl">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-5 sm:px-6">
+              <div><h2 className="text-xl font-bold text-white">Чат игроков</h2><p className="mt-1 text-xs text-slate-500">Договоритесь, кто заберёт кубок</p></div>
+              <div className="flex items-center gap-2 rounded-full bg-slate-950/40 px-3 py-1.5 text-xs text-slate-400"><span className={`h-1.5 w-1.5 rounded-full ${isConnected ? "bg-emerald-400" : "bg-amber-400"}`} />{isConnected ? "в эфире" : "соединяемся"}</div>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {messages.length === 0 && <p className="text-sm text-slate-500 text-center mt-10">Поздоровайся с игроками 👋</p>}
-              {messages.map((message) => <article key={message.id} className="rounded-xl bg-surface/60 p-3 border border-border/60">
-                <div className="flex justify-between gap-3 text-xs mb-1"><span className="font-semibold text-slate-200">{message.nickname}</span>
-                  <time className="text-slate-500">{new Date(message.sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div>
-                <p className="text-sm text-slate-300 break-words">{message.text}</p>
+            <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+              {messages.length === 0 && <div className="flex h-full min-h-48 flex-col items-center justify-center text-center"><div className="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-orange-400/10 text-orange-300"><Lightning size={23} weight="fill" /></div><p className="font-medium text-slate-300">Чат пока тихий</p><p className="mt-1 text-sm text-slate-500">Напиши команде первое сообщение 👋</p></div>}
+              {messages.map((message) => <article key={message.id} className={`max-w-[92%] rounded-2xl border p-3 ${message.nickname === session?.nickname ? "ml-auto border-orange-400/15 bg-orange-400/[0.07]" : "border-white/[0.06] bg-slate-950/30"}`}>
+                <div className="mb-1 flex items-center justify-between gap-4"><span className="truncate text-xs font-bold text-slate-300">{message.nickname}</span><time className="shrink-0 text-[10px] text-slate-600">{new Date(message.sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div>
+                <p className="break-words text-sm leading-relaxed text-slate-200">{message.text}</p>
               </article>)}
               <div ref={chatEndRef} />
             </div>
-            <form className="mt-4 flex gap-2" onSubmit={(event) => { event.preventDefault(); handleSendChat(); }}>
-              <input value={chatText} onChange={(event) => setChatText(event.target.value)} maxLength={300} disabled={!session}
-                placeholder={session ? "Написать сообщение…" : "Войдите, чтобы писать в чат"}
-                className="min-w-0 flex-1 rounded-xl bg-surface border border-border px-3 py-2.5 text-sm outline-none focus:border-accent disabled:opacity-50" />
-              <button type="submit" disabled={!session || !chatText.trim()} aria-label="Отправить сообщение"
-                className="rounded-xl bg-accent px-3 text-white hover:brightness-110 disabled:opacity-40"><PaperPlaneTilt size={19} /></button>
+            <form className="border-t border-white/[0.06] p-4 sm:p-5" onSubmit={(event) => { event.preventDefault(); handleSendChat(); }}>
+              <div className="flex gap-2">
+                <input value={chatText} onChange={(event) => setChatText(event.target.value)} maxLength={300} disabled={!session}
+                  placeholder={session ? "Написать сообщение…" : "Войдите, чтобы писать в чат"}
+                  className="min-w-0 flex-1 rounded-xl border border-white/[0.08] bg-slate-950/50 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-orange-400/50 disabled:opacity-50" />
+                <button type="submit" disabled={!session || !chatText.trim()} aria-label="Отправить сообщение"
+                  className="grid w-12 shrink-0 place-items-center rounded-xl bg-orange-500 text-white transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"><PaperPlaneTilt size={19} weight="fill" /></button>
+              </div>
+              <p className="mt-2 text-[10px] text-slate-600">До 300 символов · без спама, пожалуйста</p>
             </form>
           </section>
         </div>
+
+        <footer className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-slate-600">
+          <span className="inline-flex items-center gap-1.5"><Lightning size={14} className="text-orange-400" />60 секунд на раунд</span>
+          <span className="inline-flex items-center gap-1.5"><Trophy size={14} className="text-amber-400" />Побеждает самый быстрый</span>
+        </footer>
       </div>
-    </motion.main>
+    </main>
   );
 }
