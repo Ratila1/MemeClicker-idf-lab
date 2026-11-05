@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -16,7 +17,6 @@ import memeclicker.idf.clickerbackend.leaderboard.LeaderboardService;
 import memeclicker.idf.clickerbackend.lobby.LobbyChangedEvent;
 import memeclicker.idf.clickerbackend.ws.WsHub;
 
-/** Итоги фиксируются после обработки маркера ROUND_END в Kafka. */
 @Component
 public class RoundFinisher {
 
@@ -30,9 +30,10 @@ public class RoundFinisher {
     private final WsHub hub;
     private final ApplicationEventPublisher events;
 
-    public RoundFinisher(StringRedisTemplate redis, RedisScript<Long> finishRoundScript, RoundStateHolder rounds,
-                         LeaderboardService leaderboard, ChatService chat, WsHub hub,
-                         ApplicationEventPublisher events) {
+    public RoundFinisher(StringRedisTemplate redis,
+                         @Qualifier("finishRoundScript") RedisScript<Long> finishRoundScript,
+                         RoundStateHolder rounds, LeaderboardService leaderboard,
+                         ChatService chat, WsHub hub, ApplicationEventPublisher events) {
         this.redis = redis;
         this.finishRoundScript = finishRoundScript;
         this.rounds = rounds;

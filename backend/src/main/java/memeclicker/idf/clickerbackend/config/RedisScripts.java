@@ -24,6 +24,11 @@ public class RedisScripts {
     }
 
     @Bean
+    RedisScript<Long> leaveScript() {
+        return script("scripts/leave.lua", Long.class);
+    }
+
+    @Bean
     RedisScript<Long> beginRoundScript() {
         return script("scripts/begin_round.lua", Long.class);
     }

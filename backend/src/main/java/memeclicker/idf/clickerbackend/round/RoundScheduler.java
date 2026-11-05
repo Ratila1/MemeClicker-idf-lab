@@ -7,6 +7,7 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
@@ -24,12 +25,6 @@ import memeclicker.idf.clickerbackend.lobby.GameStart;
 import memeclicker.idf.clickerbackend.lobby.LobbyChangedEvent;
 import memeclicker.idf.clickerbackend.ws.WsHub;
 
-/**
- * Серверный таймер раунда:
- * startAt            -> phase = running;
- * endAt + grace      -> маркер ROUND_END в топик clicks.
- * Итоги фиксирует консьюмер, дойдя до маркера (RoundFinisher), а не этот таймер.
- */
 @Component
 public class RoundScheduler {
 
@@ -46,7 +41,8 @@ public class RoundScheduler {
     private final ApplicationEventPublisher events;
     private final ClickerProperties props;
 
-    public RoundScheduler(RoundStateHolder rounds, StringRedisTemplate redis, RedisScript<Long> beginRoundScript,
+    public RoundScheduler(RoundStateHolder rounds, StringRedisTemplate redis,
+                          @Qualifier("beginRoundScript") RedisScript<Long> beginRoundScript,
                           ClickProducer producer, LeaderboardService leaderboard, WsHub hub,
                           TaskScheduler scheduler, ApplicationEventPublisher events, ClickerProperties props) {
         this.rounds = rounds;
@@ -98,11 +94,7 @@ public class RoundScheduler {
         }
     }
 
-    /**
-     * Рестарт посреди раунда: восстанавливаем кеш и таймеры из Redis.
-     * Если время раунда уже вышло, маркер публикуется сразу; повторный маркер
-     * безопасен, фиксация итогов идемпотентна.
-     */
+    /** Рестарт посреди раунда: восстанавливаем кеш и таймеры из Redis. */
     @EventListener(ApplicationReadyEvent.class)
     public void recoverOnStartup() {
         try {
@@ -114,10 +106,8 @@ public class RoundScheduler {
             if (r.isEmpty()) {
                 return;
             }
-            var round = new RoundState(
-                    r.get("roundId").toString(),
-                    Long.parseLong(r.get("startAt").toString()),
-                    Long.parseLong(r.get("endAt").toString()));
+            var round = new RoundState(r.get("roundId").toString(),
+                    Long.parseLong(r.get("startAt").toString()), Long.parseLong(r.get("endAt").toString()));
             log.info("recovering round {} (phase={})", round.roundId(), phase);
             activate(round);
         } catch (RuntimeException e) {

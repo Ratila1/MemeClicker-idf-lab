@@ -10,6 +10,7 @@ import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -38,9 +39,12 @@ public class LobbyService {
     private final ApplicationEventPublisher events;
     private final ClickerProperties props;
 
-    public LobbyService(StringRedisTemplate redis, RedisScript<String> joinScript, RedisScript<String> readyScript,
-                        RedisScript<Long> leaveScript, PlayerTokens tokens, RoundStateHolder rounds,
-                        RoundScheduler scheduler, ApplicationEventPublisher events, ClickerProperties props) {
+    public LobbyService(StringRedisTemplate redis,
+                        @Qualifier("joinScript") RedisScript<String> joinScript,
+                        @Qualifier("readyScript") RedisScript<String> readyScript,
+                        @Qualifier("leaveScript") RedisScript<Long> leaveScript,
+                        PlayerTokens tokens, RoundStateHolder rounds, RoundScheduler scheduler,
+                        ApplicationEventPublisher events, ClickerProperties props) {
         this.redis = redis;
         this.joinScript = joinScript;
         this.readyScript = readyScript;
@@ -54,7 +58,9 @@ public class LobbyService {
 
     public String join(String rawNickname) {
         var nickname = rawNickname == null ? "" : rawNickname.trim();
-        if (!NICKNAME.matcher(nickname).matches()) throw ApiException.badRequest("Никнейм: 1-20 символов, буквы, цифры, _ или -");
+        if (!NICKNAME.matcher(nickname).matches()) {
+            throw ApiException.badRequest("Никнейм: 1-20 символов, буквы, цифры, _ или -");
+        }
         var token = UUID.randomUUID().toString();
         var result = redis.execute(joinScript,
                 List.of(RedisKeys.PLAYERS, RedisKeys.READY, RedisKeys.PHASE, RedisKeys.TOKENS, RedisKeys.ROUND),

@@ -5,6 +5,7 @@ import java.util.List;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -17,11 +18,6 @@ import memeclicker.idf.clickerbackend.config.RedisKeys;
 import memeclicker.idf.clickerbackend.leaderboard.LeaderboardService;
 import memeclicker.idf.clickerbackend.round.RoundFinisher;
 
-/**
- * Консьюмер топика clicks. Обработка строго синхронная: офсет подтверждается
- * только после успешного Lua-скрипта. Любое исключение = нет ack, запись
- * перечитывается; после N повторов она уходит в DLQ (см. KafkaConfig).
- */
 @Component
 public class ClickConsumer {
 
@@ -34,7 +30,8 @@ public class ClickConsumer {
     private final Json json;
     private final ClickerProperties props;
 
-    public ClickConsumer(StringRedisTemplate redis, RedisScript<Long> clickScript,
+    public ClickConsumer(StringRedisTemplate redis,
+                         @Qualifier("clickScript") RedisScript<Long> clickScript,
                          LeaderboardService leaderboard, RoundFinisher finisher,
                          Json json, ClickerProperties props) {
         this.redis = redis;
