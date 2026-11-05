@@ -19,6 +19,7 @@ import memeclicker.idf.clickerbackend.web.ApiException;
 public class ChatSocketHandler extends TextWebSocketHandler {
 
     private static final int MAX_FRAME_CHARS = 1024;
+    private static final CloseStatus MESSAGE_TOO_BIG = new CloseStatus(1009, "Message too big");
 
     private final WsHub hub;
     private final ChatService chat;
@@ -39,7 +40,7 @@ public class ChatSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         if (message.getPayloadLength() > MAX_FRAME_CHARS) {
-            session.close(CloseStatus.TOO_BIG); // лимит входящего кадра
+            session.close(MESSAGE_TOO_BIG);
             return;
         }
         try {
