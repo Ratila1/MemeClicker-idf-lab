@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle, Users, SignIn } from "@phosphor-icons/react";
 import { joinLobby, setReady, getLobbySnapshot } from "../api/lobby";
-import { saveSession, clearSession } from "../state/session";
+import {
+  saveSession,
+  clearSession,
+  loadSavedNickname,
+  saveNickname,
+  clearSavedNickname,
+} from "../state/session";
 import { useWebSocket } from "../ws/useWebSocket";
 import { setOffset } from "../utils/clock";
 import { wsUrl } from "../utils/ws";
@@ -25,10 +31,12 @@ const item = {
 };
 
 export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
-  const [nickname, setNickname] = useState("");
+  const [nickname, setNickname] = useState(() => loadSavedNickname() ?? "");
+  const [rememberNickname, setRememberNickname] = useState(true);
   const [lobby, setLobby] = useState<LobbySnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+  const autoJoinAttempted = useRef(false);
 
   const url = wsUrl("/ws/lobby");
   const { status: wsStatus } = useWebSocket({
@@ -52,14 +60,18 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
     getLobbySnapshot().then(setLobby).catch(() => {});
   }, []);
 
-  const handleJoin = async () => {
-    if (!nickname.trim()) return;
+  const handleJoin = async (nick?: string) => {
+    const value = (nick ?? nickname).trim();
+    if (!value) return;
     setJoining(true);
     setError(null);
     try {
-      const s = await joinLobby(nickname.trim());
+      const s = await joinLobby(value);
+      if (rememberNickname) saveNickname(s.nickname);
+      else clearSavedNickname();
       saveSession(s);
       onSession(s);
+      setNickname(s.nickname);
     } catch (e: any) {
       if (e?.status === 401) clearSession();
       setError(e?.message ?? "Не удалось войти");
@@ -67,6 +79,18 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
       setJoining(false);
     }
   };
+
+  // Автовход по сохранённому нику (один раз за монтирование).
+  useEffect(() => {
+    if (session) return;
+    if (autoJoinAttempted.current) return;
+    const saved = loadSavedNickname();
+    if (!saved) return;
+    autoJoinAttempted.current = true;
+    setNickname(saved);
+    void handleJoin(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   const handleReady = async () => {
     if (!session) return;
@@ -127,13 +151,36 @@ export function LobbyScreen({ session, onSession, onRoundStart }: Props) {
                 className="flex-1 rounded-xl bg-surface border border-border px-4 py-3 outline-none focus:border-accent transition-colors"
               />
               <button
-                onClick={handleJoin}
+                onClick={() => handleJoin()}
                 disabled={joining}
                 className="rounded-xl bg-accent px-5 py-3 font-semibold text-white flex items-center gap-2 hover:brightness-110 active:scale-[0.98] transition disabled:opacity-50"
               >
                 <SignIn size={20} />
                 {joining ? "Вход..." : "Войти"}
               </button>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-400">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={rememberNickname}
+                  onChange={(e) => setRememberNickname(e.target.checked)}
+                  className="accent-accent"
+                />
+                Запомнить никнейм
+              </label>
+              {loadSavedNickname() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearSavedNickname();
+                    setNickname("");
+                  }}
+                  className="text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Забыть
+                </button>
+              )}
             </div>
           </motion.div>
         )}
