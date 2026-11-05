@@ -10,15 +10,13 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
+import memeclicker.idf.clickerbackend.chat.ChatService;
 import memeclicker.idf.clickerbackend.config.RedisKeys;
 import memeclicker.idf.clickerbackend.leaderboard.LeaderboardService;
 import memeclicker.idf.clickerbackend.lobby.LobbyChangedEvent;
 import memeclicker.idf.clickerbackend.ws.WsHub;
 
-/**
- * Обработка маркера ROUND_END консьюмером. Партиция одна, поэтому к этому
- * моменту все клики раунда уже учтены: итоги окончательные.
- */
+/** Итоги фиксируются после обработки маркера ROUND_END в Kafka. */
 @Component
 public class RoundFinisher {
 
@@ -28,23 +26,24 @@ public class RoundFinisher {
     private final RedisScript<Long> finishRoundScript;
     private final RoundStateHolder rounds;
     private final LeaderboardService leaderboard;
+    private final ChatService chat;
     private final WsHub hub;
     private final ApplicationEventPublisher events;
 
     public RoundFinisher(StringRedisTemplate redis, RedisScript<Long> finishRoundScript, RoundStateHolder rounds,
-                         LeaderboardService leaderboard, WsHub hub, ApplicationEventPublisher events) {
+                         LeaderboardService leaderboard, ChatService chat, WsHub hub,
+                         ApplicationEventPublisher events) {
         this.redis = redis;
         this.finishRoundScript = finishRoundScript;
         this.rounds = rounds;
         this.leaderboard = leaderboard;
+        this.chat = chat;
         this.hub = hub;
         this.events = events;
     }
 
     public void finish(String roundId) {
-        if (roundId == null) {
-            return;
-        }
+        if (roundId == null) return;
         Long written = redis.execute(finishRoundScript,
                 List.of(RedisKeys.leaderboard(roundId), RedisKeys.match(roundId), RedisKeys.HISTORY,
                         RedisKeys.PHASE, RedisKeys.ROUND),
@@ -52,6 +51,7 @@ public class RoundFinisher {
         log.info("round {} finished (first time: {})", roundId, written != null && written == 1L);
         rounds.clearIf(roundId);
         leaderboard.roundFinished(roundId);
+        chat.clearAfterRound();
         hub.leaderboard().broadcast(hub.encode("round-end", Map.of("roundId", roundId)));
         events.publishEvent(new LobbyChangedEvent());
     }
