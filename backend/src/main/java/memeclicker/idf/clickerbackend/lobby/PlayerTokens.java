@@ -47,4 +47,10 @@ public class PlayerTokens {
     public void clear() {
         cache.clear();
     }
+
+    public void forget(String token) {
+        if (token != null) {
+            cache.remove(token);
+        }
+    }
 }
