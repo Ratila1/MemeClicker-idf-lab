@@ -1,4 +1,4 @@
-// === DTOs, соответствующие бэкенду (TZ) ===
+// === DTOs, соответствующие backend ===
 
 export interface PlayerInfo {
   nickname: string;
@@ -14,9 +14,9 @@ export interface LobbySnapshot {
 
 export interface RoundInfo {
   roundId: string;
-  startAt: number; // server epoch ms
-  roundEndTime: number; // server epoch ms
-  serverTime?: number; // server epoch ms at event time
+  startAt: number;
+  roundEndTime: number;
+  serverTime?: number;
 }
 
 export interface LeaderboardEntry {
@@ -34,4 +34,11 @@ export interface RoundResults {
 export interface Session {
   nickname: string;
   playerToken: string;
+}
+
+export interface LobbyChatMessage {
+  id: string;
+  nickname: string;
+  text: string;
+  sentAt: number;
 }
