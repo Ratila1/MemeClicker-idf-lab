@@ -38,6 +38,11 @@ public class RedisScripts {
         return script("scripts/finish_round.lua", Long.class);
     }
 
+    @Bean
+    RedisScript<Long> chatSendScript() {
+        return script("scripts/chat_send.lua", Long.class);
+    }
+
     private static <T> RedisScript<T> script(String path, Class<T> type) {
         var s = new DefaultRedisScript<T>();
         s.setLocation(new ClassPathResource(path));

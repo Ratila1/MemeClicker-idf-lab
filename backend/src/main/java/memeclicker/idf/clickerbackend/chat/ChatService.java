@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpStatus;
@@ -32,7 +33,8 @@ public class ChatService {
     private final Json json;
     private final WsHub hub;
 
-    public ChatService(StringRedisTemplate redis, RedisScript<Long> chatSendScript,
+    public ChatService(StringRedisTemplate redis,
+                       @Qualifier("chatSendScript") RedisScript<Long> chatSendScript,
                        PlayerTokens tokens, Json json, WsHub hub) {
         this.redis = redis;
         this.chatSendScript = chatSendScript;
