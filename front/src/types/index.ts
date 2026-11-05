@@ -36,9 +36,12 @@ export interface Session {
   playerToken: string;
 }
 
-export interface LobbyChatMessage {
+export interface ChatMessage {
   id: string;
   nickname: string;
   text: string;
   sentAt: number;
 }
+
+// Backwards-compatible name used by the earlier lobby chat.
+export type LobbyChatMessage = ChatMessage;
