@@ -46,7 +46,7 @@ clicker:
   round-duration: 60s
   round-end-grace: 1s
   click-send-timeout: 2s
-  dedup-ttl-seconds: 86400
+  dedup-ttl-seconds: 1200
   consumer-max-retries: 3
   clicks-topic: clicks
   dlq-topic: clicks.dlq
