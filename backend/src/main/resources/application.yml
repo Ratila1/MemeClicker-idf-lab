@@ -38,6 +38,10 @@ management:
     web:
       exposure:
         include: health,info
+  endpoint:
+    health:
+      # Видно, какой компонент лежит (redis / kafka / diskSpace), без деталей подключения
+      show-components: always
 
 # Игровые параметры (см. ClickerProperties)
 clicker:
