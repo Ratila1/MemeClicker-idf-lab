@@ -4,6 +4,9 @@ import { wsUrl } from "../utils/ws";
 import type { ChatMessage, Session } from "../types";
 
 const MAX_VISIBLE_MESSAGES = 200;
+// Чуть больше серверного кулдауна (1200 мс): сервер меряет время по приходу
+// сообщения, и из-за разброса задержек в сети ровно 1200 мс иногда отклоняются.
+const CLIENT_COOLDOWN_MS = 1500;
 interface Props { session: Session | null }
 
 export function ChatPanel({ session }: Props) {
@@ -14,6 +17,9 @@ export function ChatPanel({ session }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const wasAtBottom = useRef(true);
   const timer = useRef<number | null>(null);
+  // Текст, отправленный и ещё не подтверждённый сервером. Поле очищается только
+  // после эха своего сообщения; при chat-error текст остаётся в поле.
+  const pending = useRef<string | null>(null);
   const url = wsUrl(`/ws/chat${session ? `?token=${encodeURIComponent(session.playerToken)}` : ""}`);
 
   const { status, send } = useWebSocket({
@@ -22,10 +28,19 @@ export function ChatPanel({ session }: Props) {
       if (raw?.type === "chat-history" && Array.isArray(raw.data)) {
         setMessages(raw.data.slice(-MAX_VISIBLE_MESSAGES));
       } else if (raw?.type === "chat-message" && raw.data?.id) {
-        setMessages((current) => [...current, raw.data as ChatMessage].slice(-MAX_VISIBLE_MESSAGES));
+        const message = raw.data as ChatMessage;
+        setMessages((current) => current.some((m) => m.id === message.id)
+          ? current
+          : [...current, message].slice(-MAX_VISIBLE_MESSAGES));
+        if (pending.current !== null && message.nickname === session?.nickname && message.text === pending.current) {
+          const sent = pending.current;
+          pending.current = null;
+          setText((current) => (current.trim() === sent ? "" : current));
+        }
       } else if (raw?.type === "chat-cleared") {
         setMessages([]);
       } else if (raw?.type === "chat-error") {
+        pending.current = null;
         setError(raw.data?.message ?? "Не удалось отправить сообщение");
       }
     },
@@ -43,11 +58,12 @@ export function ChatPanel({ session }: Props) {
   const submit = () => {
     const value = text.trim();
     if (!session || !value || cooldown || status !== "open") return;
+    if (!send({ text: value })) return;
     setError(null);
     setCooldown(true);
-    send({ text: value });
-    setText("");
-    timer.current = window.setTimeout(() => setCooldown(false), 1200);
+    pending.current = value;
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCooldown(false), CLIENT_COOLDOWN_MS);
   };
 
   return (
@@ -83,7 +99,7 @@ export function ChatPanel({ session }: Props) {
           <button type="submit" disabled={!text.trim() || cooldown || status !== "open"} aria-label="Отправить сообщение"
             className="grid w-12 shrink-0 place-items-center rounded-xl bg-orange-500 text-white transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40">➤</button>
         </div>
-        <p className="mt-2 text-[10px] text-slate-600">До 240 символов · не чаще одного сообщения в 1,2 секунды</p>
+        <p className="mt-2 text-[10px] text-slate-600">До 240 символов · не чаще одного сообщения в 1,5 секунды</p>
       </form> : <p className="border-t border-white/[0.06] p-5 text-sm text-slate-500">Войдите, чтобы отправлять сообщения. История доступна всем.</p>}
     </section>
   );
